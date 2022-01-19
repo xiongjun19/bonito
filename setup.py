@@ -15,7 +15,8 @@ else:
     raise RuntimeError('Unable to find version string in "{}/__init__.py".'.format(__pkg_name__))
 
 
-CUDA_VERSION = os.environ.get('CUDA_VERSION')
+# CUDA_VERSION = os.environ.get('CUDA_VERSION')
+CUDA_VERSION = '113' 
 assert(CUDA_VERSION in {'111', '113', None})
 
 
@@ -27,6 +28,7 @@ else:
     print("Building with CUDA 10.2")
     require_file = 'requirements.txt'
     package_name = "ont-%s" % __pkg_name__
+require_file = 'lt_req.txt'
 
 with open(require_file) as f:
     requirements = f.read().splitlines()
