@@ -4,8 +4,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from transformers import get_linear_schedule_with_warmup
 
 def hg_lr_with_warmup_decay(warmup_ratio=None, **kwargs):
-    return lambda optimizer, train_loader, epochs, last_epoch:
-        get_hg_lr_with_warmup_decay(
+    return lambda optimizer, train_loader, epochs, last_epoch: get_hg_lr_with_warmup_decay(
                 optimizer=optimizer,
                 total_steps=epochs * len(train_loader),
                 warmup_ratio=warmup_ratio,
@@ -18,7 +17,7 @@ def get_hg_lr_with_warmup_decay(optimizer, total_steps,
         warmup_ratio = 0.05
     warmup_step = math.floor(total_steps * warmup_ratio)
     lr_sch = get_linear_schedule_with_warmup(optimizer, warmup_step,
-                                             total_steps, last_epoch=last_epoch)
+                                             total_steps, last_epoch=-1)
     return lr_sch
 
 
