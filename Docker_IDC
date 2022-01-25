@@ -1,7 +1,7 @@
 FROM nvcr.io/nvidia/pytorch:21.05-py3
 
 ENV HTTP_PROXY=http://10.200.3.5:3128
-ENV HTTPS_PROXY=http://10.200.3.5:3128
+ENV HTTPS_PROXY=https://10.200.3.5:3128
 ENV ALL_PROXY=http://10.200.3.5:3128
 ENV NO_PROXY=.rd.lgt.ai,.lgt.ai
 
