@@ -4,6 +4,8 @@ Bonito CTC-CRF Model, replace rnn with transformer.
 
 import torch
 from torch import nn
+from torch.nn import LayerNorm
+from torch.nn import TransformerEncoderLayer, TransformerEncoder
 import numpy as np
 import math
 from typing import Optional
@@ -148,8 +150,9 @@ def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activa
             conv(insize, 4, ks=5, bias=True, activation=activation),
             conv(4, 16, ks=5, bias=True, activation=activation),
             conv(16, features, ks=winlen, stride=stride, bias=True, activation=activation),
-            Permute([2, 0, 1]),
-            CusEncoder(num_layers, 12, 4 * features, d_model=features, dropout=0.2),
+            Permute([0, 2, 1]),
+            CusEncoder(num_layers, 12, 4 * features, d_model=features, dropout=0.1),
+            Permute([1, 0, 2]),
             LinearCRFEncoder(
                 features, n_base, state_len, activation='tanh', scale=scale,
                 blank_score=blank_score, expand_blanks=expand_blanks
@@ -222,284 +225,6 @@ class PositionalEncoding(nn.Module):
         return self.pe[:, : x.size(1)].clone().detach()
 
 
-class TransformerEncoderLayer(nn.Module):
-    def __init__(
-        self,
-        d_ffn,
-        nhead,
-        d_model,
-        kdim=None,
-        vdim=None,
-        dropout=0.0,
-        activation=nn.ReLU,
-        normalize_before=False,
-        causal=False,
-    ):
-        super().__init__()
-        self.self_att = MultiheadAttention(
-            nhead=nhead,
-            d_model=d_model,
-            dropout=dropout,
-            kdim=kdim,
-            vdim=vdim,
-        )
-
-        self.pos_ffn = PositionalwiseFeedForward(
-            d_ffn=d_ffn,
-            input_size=d_model,
-            dropout=dropout,
-            activation=activation,
-        )
-
-        self.norm1 = LayerNorm(d_model, eps=1e-6)
-        self.norm2 = LayerNorm(d_model, eps=1e-6)
-        self.dropout1 = torch.nn.Dropout(dropout)
-        self.dropout2 = torch.nn.Dropout(dropout)
-
-        self.normalize_before = normalize_before
-
-    def forward(
-        self,
-        src,
-        src_mask: Optional[torch.Tensor] = None,
-        src_key_padding_mask: Optional[torch.Tensor] = None,
-        pos_embs: Optional[torch.Tensor] = None,
-    ):
-        """
-        Arguments
-        ----------
-        src : torch.Tensor
-            The sequence to the encoder layer.
-        src_mask : torch.Tensor
-            The mask for the src query for each example in the batch.
-        src_key_padding_mask : torch.Tensor, optional
-            The mask for the src keys for each example in the batch.
-        """
-        if self.normalize_before:
-            src1 = self.norm1(src)
-        else:
-            src1 = src
-
-        output, self_attn = self.self_att(
-            src1,
-            src1,
-            src1,
-            attn_mask=src_mask,
-            key_padding_mask=src_key_padding_mask,
-            pos_embs=pos_embs,
-        )
-
-        # add & norm
-        src = src + self.dropout1(output)
-        if not self.normalize_before:
-            src = self.norm1(src)
-
-        if self.normalize_before:
-            src1 = self.norm2(src)
-        else:
-            src1 = src
-        output = self.pos_ffn(src1)
-
-        # add & norm
-        output = src + self.dropout2(output)
-        if not self.normalize_before:
-            output = self.norm2(output)
-
-        return output, self_attn
-
-
-class TransformerEncoder(nn.Module):
-    def __init__(
-        self,
-        num_layers,
-        nhead,
-        d_ffn,
-        input_shape=None,
-        d_model=None,
-        kdim=None,
-        vdim=None,
-        dropout=0.0,
-        activation=nn.ReLU,
-        normalize_before=False,
-        causal=False,
-    ):
-        super().__init__()
-
-        self.layers = torch.nn.ModuleList(
-            [
-                TransformerEncoderLayer(
-                    d_ffn=d_ffn,
-                    nhead=nhead,
-                    d_model=d_model,
-                    kdim=kdim,
-                    vdim=vdim,
-                    dropout=dropout,
-                    activation=activation,
-                    normalize_before=normalize_before,
-                    causal=causal,
-                )
-                for i in range(num_layers)
-            ]
-        )
-        self.norm = LayerNorm(d_model, eps=1e-6)
-
-    def forward(
-        self,
-        src,
-        src_mask: Optional[torch.Tensor] = None,
-        src_key_padding_mask: Optional[torch.Tensor] = None,
-        pos_embs: Optional[torch.Tensor] = None,
-    ):
-        output = src
-        attention_lst = []
-        for enc_layer in self.layers:
-            output, attention = enc_layer(
-                output,
-                src_mask=src_mask,
-                src_key_padding_mask=src_key_padding_mask,
-                pos_embs=pos_embs,
-            )
-            attention_lst.append(attention)
-        output = self.norm(output)
-
-        return output, attention_lst
-
-
-class MultiheadAttention(nn.Module):
-
-    def __init__(
-        self,
-        nhead,
-        d_model,
-        dropout=0.0,
-        bias=True,
-        add_bias_kv=False,
-        add_zero_attn=False,
-        kdim=None,
-        vdim=None,
-    ):
-        super().__init__()
-
-        self.att = nn.MultiheadAttention(
-            embed_dim=d_model,
-            num_heads=nhead,
-            dropout=dropout,
-            bias=bias,
-            add_bias_kv=add_bias_kv,
-            add_zero_attn=add_zero_attn,
-            kdim=kdim,
-            vdim=vdim,
-        )
-
-    def forward(
-        self,
-        query,
-        key,
-        value,
-        attn_mask: Optional[torch.Tensor] = None,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        return_attn_weights: Optional[torch.Tensor] = True,
-        pos_embs: Optional[torch.Tensor] = None,
-    ):
-        
-        # give tensors of shape (time, batch, fea)
-        query = query.permute(1, 0, 2)
-        key = key.permute(1, 0, 2)
-        value = value.permute(1, 0, 2)
-
-        # this will be legit because of https://github.com/pytorch/pytorch/blob/5288d05cfdda85c46c4df84617fa7f37c21b10b3/torch/nn/functional.py#L4946
-        # we can inject relative learnable pos embeddings directly in MHA via the attn_mask
-        if pos_embs is not None:
-            if attn_mask is not None:
-                attn_mask += pos_embs
-            else:
-                attn_mask = pos_embs
-
-        output = self.att(
-            query,
-            key,
-            value,
-            attn_mask=attn_mask,
-            key_padding_mask=key_padding_mask,
-            need_weights=return_attn_weights,
-        )
-
-        if return_attn_weights:
-            output, attention_weights = output
-            # reshape the output back to (batch, time, fea)
-            output = output.permute(1, 0, 2)
-            return output, attention_weights
-        else:
-            output = output.permute(1, 0, 2)
-            return output
-
-
-class PositionalwiseFeedForward(nn.Module):
-    def __init__(
-        self,
-        d_ffn,
-        input_shape=None,
-        input_size=None,
-        dropout=0.0,
-        activation=nn.ReLU,
-    ):
-        super().__init__()
-
-        if input_shape is None and input_size is None:
-            raise ValueError("Expected one of input_shape or input_size")
-
-        if input_size is None:
-            input_size = input_shape[-1]
-
-        self.ffn = nn.Sequential(
-            nn.Linear(input_size, d_ffn),
-            activation(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ffn, input_size),
-        )
-
-    def forward(self, x):
-        # give a tensor of shap (time, batch, fea)
-        x = x.permute(1, 0, 2)
-        x = self.ffn(x)
-
-        # reshape the output back to (batch, time, fea)
-        x = x.permute(1, 0, 2)
-        return x
-
-
-class LayerNorm(nn.Module):
-    def __init__(
-        self,
-        input_size=None,
-        input_shape=None,
-        eps=1e-05,
-        elementwise_affine=True,
-    ):
-        super().__init__()
-        self.eps = eps
-        self.elementwise_affine = elementwise_affine
-
-        if input_shape is not None:
-            input_size = input_shape[2:]
-
-        self.norm = torch.nn.LayerNorm(
-            input_size,
-            eps=self.eps,
-            elementwise_affine=self.elementwise_affine,
-        )
-
-    def forward(self, x):
-        """Returns the normalized input tensor.
-
-        Arguments
-        ---------
-        x : torch.Tensor (batch, time, channels)
-            input to normalize. 3d or 4d tensors are expected.
-        """
-        return self.norm(x)
-
-
 class CusEncoder(nn.Module):
     def __init__(
         self,
@@ -511,24 +236,26 @@ class CusEncoder(nn.Module):
         kdim=None,
         vdim=None,
         dropout=0.0,
-        activation=nn.GELU,
+        activation='relu',
         normalize_before=False,
         causal=False,
+        batch_first=True
     ):
         super().__init__()
         self.pos_enc =PositionalEncoding(d_model)
-        self.encoder = TransformerEncoder(num_layers, nhead, d_ffn, input_shape, d_model, kdim,
-					  vdim, dropout, activation, normalize_before, causal)
+        encoder_layer =  TransformerEncoderLayer(d_model, nhead, d_ffn, dropout,
+                                                 activation, 1e-5, batch_first)  
+        encoder_norm = LayerNorm(d_model, eps=1e-5)
+        self.encoder = TransformerEncoder(encoder_layer, num_layers, encoder_norm)
 
     def forward(
         self,
         src,
         src_mask: Optional[torch.Tensor] = None,
-        src_key_padding_mask: Optional[torch.Tensor] = None,
-        pos_embs: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None
     ):
         pe = self.pos_enc(src)
         output = src + pe 
-        output, _ = self.encoder(output, src_mask, src_key_padding_mask, pos_embs)
+        output = self.encoder(output, src_mask, src_key_padding_mask)
         return output
 
