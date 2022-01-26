@@ -16,3 +16,4 @@ python-dateutil==2.8.2
 koi-cuda113==0.0.5
 cupy-cuda113==9.6.0
 ont-seqdist-cuda113==0.0.4
+transformers==4.15.0
