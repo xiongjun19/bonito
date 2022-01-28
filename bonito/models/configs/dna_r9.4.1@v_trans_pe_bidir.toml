@@ -1,7 +1,7 @@
 # Bonito CTC-CRF RNN Model
 
 [model]
-package = "bonito.transformer"
+package = "bonito.pes_bidir_trans"
 
 [labels]
 labels = [ "N", "A", "C", "G", "T" ]
