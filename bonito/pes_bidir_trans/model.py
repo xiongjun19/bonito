@@ -267,11 +267,17 @@ class TransEncWrapper(nn.Module):
     def __init__(self, encoder, d_model, reverse=False):
         super().__init__()
         self.reverse = reverse
+        fac = torch.empty([1, 1])
+        torch.nn.init.normal(fac, mean=1.5)
+        self.fac = nn.Parameter(fac)
         self.pos_enc = PositionalEncoding(d_model)
         self.encoder = encoder
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None):
         pe = self.pos_enc(src)
+        pe = (1 / (1 + torch.pow(self.fac, 2))) *  pe
+        # print("scr norm is: ", torch.norm(src).detatch())
+        # print("pe norm is: ", torch.norm(pe).detach())
         if self.reverse:
             src = src.flip(1)
         output = src + pe
@@ -309,8 +315,8 @@ class PesBiDirTransEnc(nn.Module):
                     )
             enc_wrap = TransEncWrapper(encoder, d_model, reverse)
             enc_stage_arr.append(enc_wrap)
-        self.encoder = nn.Sequential(*enc_stage_arr)
+        self.cur_encoder = nn.Sequential(*enc_stage_arr)
 
     def forward(self, src, src_mask=None, src_key_padding_mask=None):
-        return self.encoder(src, src_mask, src_key_padding_mask)
+        return self.cur_encoder(src)
 

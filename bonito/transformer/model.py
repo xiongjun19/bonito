@@ -255,8 +255,9 @@ class CusEncoder(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None
     ):
-        pe = self.pos_enc(src)
-        output = src + pe 
+        # pe = self.pos_enc(src)
+        # output = src + pe 
+        output = src 
         output = self.encoder(output, src_mask, src_key_padding_mask)
         return output
 
