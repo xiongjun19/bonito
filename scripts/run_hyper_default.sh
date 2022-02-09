@@ -5,9 +5,11 @@ set -x
 config_path=$1
 suffix=$2
 data_path="/workspace/bonito/bonito/data/dna_r9.4.1"
-seed_arr=(42 1000)
+# seed_arr=(42 1000)
+seed_arr=(1000)
 # lr_arr=(5e-4 1e-3 1e-4 5e-5)
-lr_arr=(1e-4 4e-4 8e-4)
+# lr_arr=(1e-4 2e-4 8e-5)
+lr_arr=(1e-4 2e-4 8e-5)
 
 
 for(( i=0;i<${#seed_arr[@]};i++)) do

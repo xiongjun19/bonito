@@ -147,14 +147,14 @@ def conv(c_in, c_out, ks, stride=1, bias=False, activation=None):
 
 def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activation='swish', 
                         rnn_type='lstm', features=768, scale=5.0, blank_score=None, 
-                        expand_blanks=True, num_layers=5, stages=1):
+                        expand_blanks=True, num_layers=5, stages=1, dropout=0.1):
     n_heads = features // 64
     return Serial([
             conv(insize, 4, ks=5, bias=True, activation=activation),
             conv(4, 16, ks=5, bias=True, activation=activation),
             conv(16, features, ks=winlen, stride=stride, bias=True, activation=activation),
             Permute([0, 2, 1]),
-            PesBiDirTransEnc(num_layers, n_heads, 4 * features, d_model=features, dropout=0.1, stages=stages),
+            PesBiDirTransEnc(num_layers, n_heads, 4 * features, d_model=features, dropout=dropout, stages=stages),
             Permute([1, 0, 2]),
             LinearCRFEncoder(
                 features, n_base, state_len, activation='tanh', scale=scale,

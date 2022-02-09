@@ -229,7 +229,7 @@ class CusEncoder(nn.Module):
     ):
         output = src
         pe = self.pos_enc(output)
-        output = self.encoder(output, src_mask, src_key_padding_mask,
+        output, _ = self.encoder(output, src_mask, src_key_padding_mask,
                               pos_embs=pe)
         return output
 
