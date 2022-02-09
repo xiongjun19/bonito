@@ -554,7 +554,7 @@ class RelPosEncXL(nn.Module):
             pe_past = tot_pe[0]
             pe_future = tot_pe[1]
             positions = (
-                torch.arange(0, seq_len, dtype=x.dtype).to(x).unsqueeze(-1)
+                torch.arange(0, seq_len, dtype=x.dtype, device='cuda').to(x).unsqueeze(-1)
             )
             sinusoids = torch.sin(positions * self.inv_freq)
             pe_past[:, 0::2] = sinusoids
