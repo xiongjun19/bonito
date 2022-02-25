@@ -39,17 +39,20 @@ def main(args):
     )
 
     accuracy_with_cov = lambda ref, seq: accuracy(ref, seq, min_coverage=args.min_coverage)
+    t_enc = 0
+    t_dec = 0
 
     for w in [int(i) for i in args.weights.split(',')]:
 
         seqs = []
 
         print("* loading model", w)
+
         model = load_model(args.model_directory, args.device, weights=w)
 
         print("* calling")
         t0 = time.perf_counter()
-
+        
         targets = []
 
         with torch.no_grad():
@@ -59,13 +62,15 @@ def main(args):
                     data = data.type(torch.float16).to(args.device)
                 else:
                     data = data.to(args.device)
-
+                t1 = time.perf_counter()
                 log_probs = model(data)
-
+                t_enc += (time.perf_counter() - t1)
+                t2 = time.perf_counter()
                 if hasattr(model, 'decode_batch'):
                     seqs.extend(model.decode_batch(log_probs))
                 else:
                     seqs.extend([model.decode(p) for p in permute(log_probs, 'TNC', 'NTC')])
+                t_dec += (time.perf_counter() - t2)
 
         duration = time.perf_counter() - t0
 
@@ -78,6 +83,8 @@ def main(args):
         print("* median    %.2f%%" % np.median(accuracies))
         print("* time      %.2f" % duration)
         print("* samples/s %.2E" % (args.chunks * data.shape[2] / duration))
+        print(f'enc time is {t_enc}')
+        print(f'dec time is {t_dec}')
 
     if args.poa:
 

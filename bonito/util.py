@@ -289,9 +289,11 @@ def load_model(dirname, device, weights=None, half=None, chunksize=None, batchsi
     state_dict = {k2: state_dict[k1] for k1, k2 in match_names(state_dict, model).items()}
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
-        name = k.replace('module.', '')
+        # name = k.replace('module.', '')
+        name = k
         new_state_dict[name] = v
 
+    # model.load_state_dict(new_state_dict)
     model.load_state_dict(new_state_dict)
 
     if half is None:
