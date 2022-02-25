@@ -68,10 +68,7 @@ def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activa
             Permute([0, 2, 1]),
             CusEncoder(num_layers, n_heads, 4 * features, d_model=features, dropout=0.1),
             Permute([1, 0, 2]),
-            LinearCRFEncoder(
-                features, n_base, state_len, activation='tanh', scale=scale,
-                blank_score=blank_score, expand_blanks=expand_blanks
-            )
+            nn.Linear(features, state_len)
     ])
 
 
