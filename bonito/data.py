@@ -48,6 +48,8 @@ def load_numpy(limit, directory):
         valid_data = [x[split:] for x in train_data]
         train_data = [x[:split] for x in train_data]
 
+    # train_data =[x[:1000] for x in train_data] 
+    # valid_data =[x[:100] for x in valid_data] 
     train_loader_kwargs = {"dataset": ChunkDataSet(*train_data), "shuffle": True}
     valid_loader_kwargs = {"dataset": ChunkDataSet(*valid_data), "shuffle": False}
     return train_loader_kwargs, valid_loader_kwargs

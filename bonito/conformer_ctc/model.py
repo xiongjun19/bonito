@@ -38,9 +38,9 @@ class CTC(object):
         self.loss_func = nn.CTCLoss()
 
     def viterbi(self, scores):
-        scores = scores.log_softmax(2)
+        scores = scores.log_softmax(2).to('cpu').numpy()
         res = []
-        T, B, S = scores.size()
+        T, B, S = scores.shape
         for i in range(B):
             seq, path = viterbi_search(scores[:, i, :], self.alphabet)
             res.append(seq)
@@ -50,7 +50,7 @@ class CTC(object):
         scores = scores.log_softmax(2)
         T, B, S = scores.size()
         input_lengths = torch.full(size=(B, ), fill_value=T, dtype=torch.long, device=scores.device)
-        loss = self.ctc_func(scores, targets, input_lengths, target_lengths)
+        loss = self.loss_func(scores, targets, input_lengths, target_lengths)
         return loss
 
 
