@@ -30,33 +30,15 @@ def conv(c_in, c_out, ks, stride=1, bias=False, activation=None):
     return Convolution(c_in, c_out, ks, stride=stride, padding=ks//2, bias=bias, activation=activation)
 
 
-def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activation='swish', rnn_type='lstm', features=768, scale=5.0, blank_score=None, expand_blanks=True, num_layers=5):
+def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activation='swish', rnn_type='lstm', features=768, scale=5.0, blank_score=None, expand_blanks=True, num_layers=5, dropout=0.1):
     n_heads = features // 64
     return Serial([
             conv(insize, 4, ks=5, bias=True, activation=activation),
             conv(4, 16, ks=5, bias=True, activation=activation),
             conv(16, features, ks=winlen, stride=stride, bias=True, activation=activation),
             Permute([0, 2, 1]),
-            CusEncoder(num_layers, n_heads, 4 * features, d_model=features, dropout=0.1),
+            CusEncoder(num_layers, n_heads, 4 * features, d_model=features, dropout=dropout),
     ])
-
-
-class SeqdistModel(Module):
-    def __init__(self, encoder, seqdist):
-        super().__init__()
-        self.seqdist = seqdist
-        self.encoder = encoder
-        self.stride = get_stride(encoder)
-        self.alphabet = seqdist.alphabet
-
-    def forward(self, x):
-        return self.encoder(x)
-
-    def decode(self, x):
-        return self.decode_batch(x.unsqueeze(1))[0]
-
-    def loss(self, scores, targets, target_lengths, **kwargs):
-        return self.seqdist.ctc_loss(scores.to(torch.float32), targets, target_lengths, **kwargs)
 
 
 class Model(nn.Module):
@@ -65,12 +47,12 @@ class Model(nn.Module):
         self.config = config
         self.state_len = config['global_norm']['state_len']
         self.alphabet = config['labels']['labels']
-        self.nbase = self.state_len - 1
+        self.n_base = self.state_len - 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
         self.joint_net = JointNet(self.state_len, **config['joint'])
         self.loss_func = transforms.RNNTLoss(blank=0)
-        self.searcher = TransducerSearcher(self.pred_net, self.joint, 0, 4, state_beam=2.3, expand_beam=2.3)
+        self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 4, state_beam=2.3, expand_beam=2.3)
 
 
     def train(self):
@@ -86,7 +68,7 @@ class Model(nn.Module):
     def forward(self, x):
         return self.encoder(x)
 
-    def decode(self, scores):
+    def decode_batch(self, scores):
         n_best_match, n_match_score = self.searcher.beam_search(scores)
         res = [self._ids_to_str(match) for match in n_best_match]
         return res
@@ -100,35 +82,40 @@ class Model(nn.Module):
          enc: [B, T, H]
          targets: [B, U],
          target_lengths  containing lengths of eatch sequence from encoder
-        """
+        """  
+        raw_targets = torch.clone(targets)
         targets = self.prepend(targets, 0)
         preds, hid = self.pred_net(targets)
         scores = self.joint_net(enc, preds) # [B, T, U+1, state_len]
-        B, T = scores.size[:2]
+        B, T, *_ = enc.size()
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=scores.device)
-        return self.loss_func(scores, targets, logit_lengths, target_lengths, **kwargs)
+        raw_targets = raw_targets.type_as(logit_lengths)
+        # target_lengths = target_lengths.type_as(logit_lengths)
+        B, U, *_ = targets.size()
+        target_lengths = torch.full((B, ), U-1, dtype=torch.int, device=scores.device) 
+        return self.loss_func(scores, raw_targets, logit_lengths, target_lengths)
 
     def prepend(self, x, val):
         B = x.size()[0]
         val_padding = torch.full((B, 1), val, device=x.device, dtype=x.dtype)
-        res = torch.cat(val_padding, x, dim=1)
+        res = torch.cat([val_padding, x], dim=1)
         return res
 
 
 class PredNet(nn.Module):
     def __init__(self, alphabet, emb_dim=512, hid_dim=512, layers=1, dropout=0.1):
         super().__init__()
-        self.dropout = Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         self.rnn = nn.LSTM(emb_dim, hid_dim, num_layers=1, batch_first=True)
         self.emb = nn.Embedding(alphabet, emb_dim)
 
     def forward(self, x, hidden=None):
         emb = self.emb(x)
-        emb = self.dropout(x)
+        emb = self.dropout(emb)
         if hidden is None:
             output, new_h = self.rnn(emb)
         else:
-            output, new_h = self.rnn(x, hidden)
+            output, new_h = self.rnn(emb, hidden)
         return output, new_h
 
 
@@ -149,6 +136,17 @@ class JointNet(nn.Module):
         joint = self.linear(joint)
         probs = F.softmax(joint, dim=3)
         return probs
+
+    def pred_logits(self, trans, preds):
+        """
+            trans: [B, T, h];
+            preds: [B, U+1, h];
+        """
+        new_trans = trans.unsqueeze(2)
+        new_preds = preds.unsqueeze(1)
+        joint = new_trans + new_preds
+        logit = self.linear(joint)
+        return logit
 
 
 class CusEncoder(nn.Module):

@@ -22,9 +22,9 @@ class TransducerSearcher(object):
         n_best_match = []
         n_match_score = []
         B = encs.size()[0]
-        with torch.no_grad:
+        with torch.no_grad():
             for i in range(B):
-                best_mach, match_score = self.search_single(encs, i)
+                best_match, match_score = self.search_single(encs, i)
                 n_best_match.append(best_match)
                 n_match_score.append(match_score)
         return n_best_match, n_match_score
@@ -44,12 +44,12 @@ class TransducerSearcher(object):
                if len(beam_hyps) >= self.beam_size:
                    break
                a_best_hyp = max(process_hyps, key=lambda x: x['log_score'] / len(x['prediction']))
-               if self.check_state_break(process_hyps, beams_hyps, a_best_hyp):
+               if self.check_state_break(process_hyps, beam_hyps, a_best_hyp):
                        break
                process_hyps.remove(a_best_hyp)
                trans_probs, new_hid = self.comp_trans_prob(encs, a_best_hyp, i_rec, t)
                target_probs, pos_arr = torch.topk(trans_probs.view(-1), k=self.beam_size)
-               best_prob = target_probs[0] if pos_arr[0] != self.bank_id  else target_probs[1]
+               best_prob = target_probs[0] if pos_arr[0] != self.blank_id  else target_probs[1]
                self.extend_search(beam_hyps, process_hyps, a_best_hyp, best_prob, target_probs, pos_arr, new_hid)
         res_hyps = sorted(beam_hyps, key=lambda x: x['log_score'] / len(x['prediction']), reverse=True)[0]
         return res_hyps['prediction'][1:],  res_hyps['log_score'] / len(res_hyps['prediction'])
@@ -65,7 +65,7 @@ class TransducerSearcher(object):
                 beam_hyps.append(new_hyp)
             elif target_prob >= best_prob - self.expand_beam:
                 new_hyp['prediction'].append(pos_arr[k].item())
-                new_hyp['hidden'] = new_hidden
+                new_hyp['hidden'] = new_hid
                 process_hyps.append(new_hyp)
 
     def comp_trans_prob(self, encs, cur_hyp, i_rec, t):

@@ -67,9 +67,9 @@ def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activa
             conv(16, features, ks=winlen, stride=stride, bias=True, activation=activation),
             Permute([0, 2, 1]),
             CusEncoder(num_layers, n_heads, 4 * features, d_model=features, dropout=dropout),
-            AttLinear(features, att_out_dim, state_len, dropout)
+            AttLinear(features, att_out_dim, state_len, dropout),
             Permute([1, 0, 2]),
-            nn.Linear(features, state_len)
+            nn.Linear(att_out_dim, state_len)
     ])
 
 
@@ -145,13 +145,14 @@ class CusEncoder(nn.Module):
 
 class AttLinear(nn.Module):
     def __init__(self, in_dim, out_dim, tag_num, dropout=0.1):
-        self.dropout = nn.Dropout(self.dropout)
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
         self.out_dim = out_dim
         self.tag_num = tag_num
         self.linear = nn.Linear(in_dim, out_dim * tag_num)
         self.activation = nn.SiLU()
  
-    def forward(x):
+    def forward(self, x):
         "input: [B, T, H]"
         "output: [B, T * alphabet, out_dim]"
         h = self.linear(x)
