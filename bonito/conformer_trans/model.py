@@ -14,6 +14,7 @@ from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, la
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
 from .searcher import TransducerSearcher
+from bonito import util as bo_util
 
 
 def get_stride(m):
@@ -53,7 +54,7 @@ class Model(nn.Module):
         self.joint_net = JointNet(self.state_len, **config['joint'])
         self.loss_func = transforms.RNNTLoss(blank=0)
         self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 4, state_beam=2.3, expand_beam=2.3)
-
+        self._load_pretrain_enc()
 
     def train(self):
         self.encoder.train()
@@ -64,6 +65,15 @@ class Model(nn.Module):
         self.encoder.eval()
         self.pred_net.eval()
         self.joint_net.eval()
+
+    def _load_pretrain_enc(self):
+        if 'pretrain' in self.config:
+            sub_cfg = config['pretrain']
+            if 'enc_path' in sub_cfg:
+                enc_path = sub_cfg['enc_path']
+                state_dict = torch.load(enc_path, map_location='cpu')
+                state_dict = {k2: state_dict[k1] for k1, k2 in bo_util.match_names(state_dict, self.encoder).items()}
+                self.encoder.load_state_dict(state_dict)
 
     def forward(self, x):
         return self.encoder(x)
