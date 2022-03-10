@@ -16,6 +16,7 @@ from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, la
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
 from bonito import util as bo_util
+from .searcher import TransducerSearcher
 
 
 def get_stride(m):
@@ -53,9 +54,7 @@ class Model(nn.Module):
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
-        # self.joint_net = JointNet(self.state_len, **config['joint'])
-        # self.loss_func = transforms.RNNTLoss(blank=0)
-        # self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 4, state_beam=2.3, expand_beam=2.3)
+        self.searcher = TransducerSearcher(pred_net, 0, 2, 2.3, 2.3)
         self.criterion = TransducerLoss()
         self._freeze = self._load_pretrain_enc()
 
@@ -64,10 +63,8 @@ class Model(nn.Module):
         self.encoder.train()
         self.enc_linear.train()
         self.pred_net.train()
-        # self.joint_net.train()
 
     def eval(self):
-        # super().eval()
         self.encoder.eval()
         self.enc_linear.eval()
         self.pred_net.eval()
@@ -102,28 +99,32 @@ class Model(nn.Module):
             with torch.no_grad():
                 enc = self.encoder(x)
         else:
-            enc = encoder(x)
+            enc = self.encoder(x)
         enc = self.enc_linear(enc)
         return enc
 
     def decode_batch(self, scores):
-        B, T, *_ = scores.size()
-        logit_lengths = torch.full((B, ), T, dtype=torch.int, device=scores.device)
-        y = torch.full([B, 1], 0, dtype=torch.int32, device=scores.device)
-        cur_len = 0 
-        for i in range(T):
-            old_y = y
-            preds, _ = self.pred_net(old_y)
-            label_lengths = torch.full((B, ), cur_len, dtype=torch.int, device=scores.device) 
-            y = self.criterion.viterbi(scores, preds,logit_lengths, label_lengths)
-            b, new_len = y.shape 
-            if new_len < 1:
-               break
-            print("shape of y is: ", y.shape)
-            cur_len = new_len
-           
-        res = [self._ids_to_str(match) for match in y]
+        n_best_match, n_match_score = self.searcher.beam_search(scores)
+        res = [self._ids_to_str(match) for match in n_best_match]
         return res
+    # def decode_batch(self, scores):
+    #     B, T, *_ = scores.size()
+    #     logit_lengths = torch.full((B, ), T, dtype=torch.int, device=scores.device)
+    #     y = torch.full([B, 1], 0, dtype=torch.int32, device=scores.device)
+    #     cur_len = 0
+    #     for i in range(T):
+    #         old_y = y
+    #         preds, _ = self.pred_net(old_y)
+    #         label_lengths = torch.full((B, ), cur_len, dtype=torch.int, device=scores.device)
+    #         y = self.criterion.viterbi(scores, preds,logit_lengths, label_lengths)
+    #         b, new_len = y.shape
+    #         if new_len < 1:
+    #            break
+    #         print("shape of y is: ", y.shape)
+    #         cur_len = new_len
+    #
+    #     res = [self._ids_to_str(match) for match in y]
+    #     return res
 
     def _ids_to_str(self, ids):
         res = [self.alphabet[_id] for _id in ids if _id > 0]
