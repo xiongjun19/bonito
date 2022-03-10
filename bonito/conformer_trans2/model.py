@@ -54,7 +54,7 @@ class Model(nn.Module):
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
-        self.searcher = TransducerSearcher(pred_net, 0, 2, 2.3, 2.3)
+        self.searcher = TransducerSearcher(self.pred_net, 0, 2, 2.3, 2.3)
         self.criterion = TransducerLoss()
         self._freeze = self._load_pretrain_enc()
 
