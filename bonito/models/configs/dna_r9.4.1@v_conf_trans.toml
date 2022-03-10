@@ -1,7 +1,7 @@
 # Bonito CTC-CRF RNN Model
 
 [model]
-package = "bonito.conformer_trans"
+package = "bonito.conformer_trans2"
 
 [labels]
 labels = [ "N", "A", "C", "G", "T" ]
@@ -28,7 +28,7 @@ dropout=0.1
 emb_dim = 768
 hid_dim = 768
 layers=1
-dropout=0.1
+dropout=0.0
 
 [joint]
 hid_dim=768
@@ -36,3 +36,6 @@ dropout=0.1
 
 [global_norm]
 state_len = 5
+
+[pretrain]
+enc_path = "bonito/data/conf1_b32_e30_2_4/weights_4.tar"

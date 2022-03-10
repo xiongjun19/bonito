@@ -58,7 +58,8 @@ def load_state(dirname, device, model, optim=None):
                 state_dict = {k2: state_dict[k1] for k1, k2 in match_names(state_dict, obj).items()}
                 new_state_dict = OrderedDict()
                 for k, v in state_dict.items():
-                    name = k.replace('module.', '')
+                    # name = k.replace('module.', '')
+                    name = k.replace('.module.', '.')
                     new_state_dict[name] = v
                 state_dict = new_state_dict
             obj.load_state_dict(state_dict)
@@ -173,6 +174,7 @@ class Trainer:
 
     def validate_one_epoch(self):
         self.model.eval()
+        print("valid num is: ", len(self.valid_loader))
         with torch.no_grad():
             seqs, refs, accs, losses = zip(*(self.validate_one_step(batch) for batch in self.valid_loader))
         seqs, refs, accs = (sum(x, []) for x in (seqs, refs, accs))
