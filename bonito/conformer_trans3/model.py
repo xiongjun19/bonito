@@ -11,6 +11,7 @@ from typing import Optional
 from torchaudio import transforms
 from collections import OrderedDict
 from transducer import TransducerLoss
+from warp_rnnt import rnnt_loss
 
 from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, from_dict
 from .conformer import ConformerEncoder
@@ -119,12 +120,13 @@ class Model(nn.Module):
          target_lengths  containing lengths of eatch sequence from encoder
         """  
         raw_targets = torch.clone(targets)
+        max_len = torch.max(target_lengths)
         raw_targets = raw_targets[:, :max_len]
         B, T, *_ = enc.size()
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=enc.device)
         raw_targets = raw_targets.type_as(logit_lengths)
         target_lengths = target_lengths.type_as(logit_lengths)
-        probs = self.comp_probs(enc, tragets, target_lengths)
+        probs = self.comp_probs(enc, targets, target_lengths)
         res = rnnt_loss(probs, raw_targets, logit_lengths, target_lengths, reduction='mean', blank=0, gather=True)
         return res
 
