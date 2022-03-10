@@ -9,6 +9,7 @@ import numpy as np
 import math
 from typing import Optional
 from torchaudio import transforms
+from collections import OrderedDict
 
 from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, from_dict
 from .conformer import ConformerEncoder
@@ -53,7 +54,7 @@ class Model(nn.Module):
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
         self.joint_net = JointNet(self.state_len, **config['joint'])
         self.loss_func = transforms.RNNTLoss(blank=0)
-        self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 4, state_beam=2.3, expand_beam=2.3)
+        self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 2, state_beam=2.3, expand_beam=2.3)
         self._load_pretrain_enc()
 
     def train(self):
@@ -68,15 +69,29 @@ class Model(nn.Module):
 
     def _load_pretrain_enc(self):
         if 'pretrain' in self.config:
-            sub_cfg = config['pretrain']
+            sub_cfg = self.config['pretrain']
             if 'enc_path' in sub_cfg:
                 enc_path = sub_cfg['enc_path']
                 state_dict = torch.load(enc_path, map_location='cpu')
-                state_dict = {k2: state_dict[k1] for k1, k2 in bo_util.match_names(state_dict, self.encoder).items()}
+                name_mps = self.match_names(state_dict, self.encoder)
+                state_dict = {k2: state_dict[k1] for k1, k2 in name_mps.items()}
                 self.encoder.load_state_dict(state_dict)
+                self.encoder.eval()
+    
+    def match_names(self, state_dict, model):
+        keys_and_shapes = lambda state_dict: zip(*[
+            (k, s) for s, i, k in sorted([(v.shape, i, k)
+            for i, (k, v) in enumerate(state_dict.items())])
+        ])
+        k1, s1 = keys_and_shapes(state_dict)
+        k2, s2 = keys_and_shapes(model.state_dict())
+        remap = dict(zip(k1[:len(k2)], k2))
+        return OrderedDict([(k, remap[k]) for k in state_dict.keys() if k in remap])  
 
     def forward(self, x):
-        return self.encoder(x)
+        self.encoder.eval()
+        with torch.no_grad():
+            return self.encoder(x)
 
     def decode_batch(self, scores):
         n_best_match, n_match_score = self.searcher.beam_search(scores)
@@ -95,14 +110,18 @@ class Model(nn.Module):
         """  
         raw_targets = torch.clone(targets)
         targets = self.prepend(targets, 0)
+        max_len = torch.max(target_lengths)
+        targets = targets[:, :max_len+1]
+        raw_targets = raw_targets[:, :max_len]
         preds, hid = self.pred_net(targets)
         scores = self.joint_net(enc, preds) # [B, T, U+1, state_len]
         B, T, *_ = enc.size()
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=scores.device)
         raw_targets = raw_targets.type_as(logit_lengths)
-        # target_lengths = target_lengths.type_as(logit_lengths)
-        B, U, *_ = targets.size()
-        target_lengths = torch.full((B, ), U-1, dtype=torch.int, device=scores.device) 
+         
+        target_lengths = target_lengths.type_as(logit_lengths)
+        # B, U, *_ = targets.size()
+        # target_lengths = torch.full((B, ), U-1, dtype=torch.int, device=scores.device) 
         return self.loss_func(scores, raw_targets, logit_lengths, target_lengths)
 
     def prepend(self, x, val):
@@ -134,6 +153,7 @@ class JointNet(nn.Module):
         super().__init__()
         self.alphabet = alphabet
         self.linear = nn.Linear(hid_dim, self.alphabet)
+        self.no_lin = nn.LeakyReLU(0.1)
 
     def forward(self, trans, preds):
         """
@@ -144,8 +164,9 @@ class JointNet(nn.Module):
         new_preds = preds.unsqueeze(1)
         joint = new_trans + new_preds
         joint = self.linear(joint)
-        probs = F.softmax(joint, dim=3)
-        return probs
+        joint = self.no_lin(joint) 
+        probs = F.log_softmax(joint, dim=-1)
+        return joint 
 
     def pred_logits(self, trans, preds):
         """

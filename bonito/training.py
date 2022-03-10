@@ -176,7 +176,7 @@ class Trainer:
         self.model.eval()
         print("valid num is: ", len(self.valid_loader))
         with torch.no_grad():
-            seqs, refs, accs, losses = zip(*(self.validate_one_step(batch) for batch in self.valid_loader))
+            seqs, refs, accs, losses = zip(*(self.validate_one_step(batch) for batch in tqdm(self.valid_loader)))
         seqs, refs, accs = (sum(x, []) for x in (seqs, refs, accs))
         loss = np.mean([(x['loss'] if isinstance(x, dict) else x) for x in losses])
         return loss, np.mean(accs), np.median(accs)
