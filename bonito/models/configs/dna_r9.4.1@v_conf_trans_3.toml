@@ -1,0 +1,43 @@
+# Bonito CTC-CRF RNN Model
+
+[model]
+package = "bonito.conformer_trans3"
+
+[labels]
+labels = [ "N", "A", "C", "G", "T" ]
+
+[input]
+features = 1
+
+[qscore]
+bias = 0.0
+scale = 1.0
+
+[encoder]
+stride = 5
+winlen = 19
+scale = 5.0
+features = 768
+rnn_type = "lstm"
+activation = "swish"
+blank_score = 2.0
+num_layers=6
+dropout=0.1
+
+[pred_net]
+emb_dim = 768
+hid_dim = 768
+layers=1
+dropout=0.0
+
+[joint_net]
+pred_dim=768
+enc_dim=768
+hid_dim=256
+dropout=0.1
+
+[global_norm]
+state_len = 5
+
+[pretrain]
+enc_path = "bonito/data/conf1_b32_e30_2_4/weights_4.tar"
