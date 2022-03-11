@@ -5,9 +5,10 @@ from torch.nn import functional as F
 
 
 class TransducerSearcher(object):
-    def __init__(self, pred_net, blank_id,
+    def __init__(self, pred_net, joint_net, blank_id,
                  beam_size=3, state_beam=2.3, expand_beam=2.3):
         self.pred_net = pred_net
+        self.joint_net = joint_net
         self.blank_id = blank_id
         self.state_beam = state_beam
         self.expand_beam = expand_beam
@@ -15,6 +16,7 @@ class TransducerSearcher(object):
 
     def set_eval(self):
         self.pred_net.eval()
+        self.joint_net.eval()
 
     def beam_search(self, encs):
         n_best_match = []
@@ -88,7 +90,7 @@ class TransducerSearcher(object):
         cur_y = cur_hyp['prediction'][-1]
         targets = torch.full([1, 1], cur_y, device=encs.device, dtype=torch.int32)
         preds, new_hid = self.pred_net(targets, cur_hyp['hidden'])
-        joint_logit = new_enc.unsqueeze(2) + preds.unsqueeze(1)
+        joint_logit = self.joint_net(new_enc, preds)
         probs = F.log_softmax(joint_logit, dim=-1)
         return probs, new_hid
 

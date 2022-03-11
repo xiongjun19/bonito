@@ -6,35 +6,23 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 import numpy as np
-import math
 from typing import Optional
-from torchaudio import transforms
 from collections import OrderedDict
-from transducer import TransducerLoss
 from warp_rnnt import rnnt_loss
 
-from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, from_dict
+from bonito.nn import Convolution,  Serial, Permute
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
-from bonito import util as bo_util
 from .searcher import TransducerSearcher
-
-
-def get_stride(m):
-    if hasattr(m, 'stride'):
-        return m.stride if isinstance(m.stride, int) else m.stride[0]
-    if isinstance(m, Convolution):
-        return get_stride(m.conv)
-    if isinstance(m, Serial):
-        return int(np.prod([get_stride(x) for x in m]))
-    return 1
 
 
 def conv(c_in, c_out, ks, stride=1, bias=False, activation=None):
     return Convolution(c_in, c_out, ks, stride=stride, padding=ks//2, bias=bias, activation=activation)
 
 
-def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activation='swish', rnn_type='lstm', features=768, scale=5.0, blank_score=None, expand_blanks=True, num_layers=5, dropout=0.1):
+def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19,
+                        activation='swish', rnn_type='lstm', features=768,
+                        scale=5.0, blank_score=None, expand_blanks=True, num_layers=5, dropout=0.1):
     n_heads = features // 64
     return Serial([
             conv(insize, 4, ks=5, bias=True, activation=activation),
@@ -53,22 +41,22 @@ class Model(nn.Module):
         self.alphabet = config['labels']['labels']
         self.n_base = self.state_len - 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
-        self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
-        self.searcher = TransducerSearcher(self.pred_net, 0, 2, 2.3, 2.3)
-        self.criterion = TransducerLoss()
+        self.joint_net = JointNet(self.state_len, **config['joint_net'])
+        self.searcher = TransducerSearcher(self.pred_net, self.joint_net, 0, 2, 2.3, 2.3)
         self._freeze = self._load_pretrain_enc()
 
     def train(self):
         super().train()
         self.encoder.train()
-        self.enc_linear.train()
         self.pred_net.train()
+        self.joint_net.train()
 
     def eval(self):
         self.encoder.eval()
         self.enc_linear.eval()
         self.pred_net.eval()
+        self.joint_net.eval()
         # self.joint_net.eval()
 
     def _load_pretrain_enc(self):
@@ -85,10 +73,12 @@ class Model(nn.Module):
         return False 
     
     def match_names(self, state_dict, model):
-        keys_and_shapes = lambda state_dict: zip(*[
-            (k, s) for s, i, k in sorted([(v.shape, i, k)
-            for i, (k, v) in enumerate(state_dict.items())])
-        ])
+        keys_and_shapes = lambda x: zip(
+            *[
+                (k, s) for s, i, k in sorted(
+                    [(v.shape, i, k) for i, (k, v) in enumerate(x.items())]
+                )
+            ])
         k1, s1 = keys_and_shapes(state_dict)
         k2, s2 = keys_and_shapes(model.state_dict())
         remap = dict(zip(k1[: len(k2)], k2))
@@ -135,9 +125,7 @@ class Model(nn.Module):
         max_len = torch.max(target_lengths)
         targets = targets[:, :max_len + 1]
         preds, hid = self.pred_net(targets)
-        new_trans = enc.unsqueeze(2)
-        new_preds = preds.unsqueeze(1)
-        joint = new_trans + new_preds
+        joint = self.joint_net(enc, preds)
         probs = F.log_softmax(joint, dim=-1)
         return probs
 
@@ -167,36 +155,40 @@ class PredNet(nn.Module):
         return output, new_h
 
 
-class JointNet(nn.Module):
-    def __init__(self, alphabet, hid_dim=512, dropout=0.1):
+class JointNet(torch.nn.Module):
+    def __init__(self, vocab_size, pred_dim=512, enc_dim=512,
+                 h_dim=128, dropout=0.1):
         super().__init__()
-        self.alphabet = alphabet
-        self.linear = nn.Linear(hid_dim, self.alphabet)
-        self.no_lin = nn.LeakyReLU(0.1)
+        layers = [
+            torch.nn.Linear(pred_dim + enc_dim, h_dim),
+            torch.nn.ReLU(),
+        ] + ([torch.nn.Dropout(p=dropout), ] if dropout else []) + [
+            torch.nn.Linear(h_dim, vocab_size)
+        ]
+        self.net = torch.nn.Sequential(
+            *layers
+        )
 
-    def forward(self, trans, preds):
+    def forward(self, f: torch.Tensor, g: torch.Tensor):
         """
-            trans: [B, T, h];
-            preds: [B, U+1, h];
+        f should be shape (B, T, H)
+        g should be shape (B, U + 1, H)
+        returns:
+            logits of shape (B, T, U+1, K + 1)
         """
-        new_trans = trans.unsqueeze(2)
-        new_preds = preds.unsqueeze(1)
-        joint = new_trans + new_preds
-        joint = self.linear(joint)
-        joint = self.no_lin(joint) 
-        # probs = F.log_softmax(joint, dim=-1)
-        return joint
+        # Combine the input states and the output states
+        B, T, H = f.shape
+        B, U_, H2 = g.shape
 
-    def pred_logits(self, trans, preds):
-        """
-            trans: [B, T, h];
-            preds: [B, U+1, h];
-        """
-        new_trans = trans.unsqueeze(2)
-        new_preds = preds.unsqueeze(1)
-        joint = new_trans + new_preds
-        logit = self.linear(joint)
-        return logit
+        f = f.unsqueeze(dim=2)   # (B, T, 1, H)
+        f = f.expand((B, T, U_, H))
+
+        g = g.unsqueeze(dim=1)   # (B, 1, U + 1, H)
+        g = g.expand((B, T, U_, H2))
+
+        inp = torch.cat([f, g], dim=3)   # (B, T, U, 2H)
+        res = self.net(inp)
+        return res
 
 
 class CusEncoder(nn.Module):
@@ -231,4 +223,3 @@ class CusEncoder(nn.Module):
         output, _ = self.encoder(output, src_mask, src_key_padding_mask,
                                  pos_embs=pe)
         return output
-
