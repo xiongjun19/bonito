@@ -2,7 +2,6 @@
 
 import torch
 from torch.nn import functional as F
-from pathos.multiprocessing import ProcessingPool as Pool
 
 
 class TransducerSearcher(object):
@@ -13,7 +12,6 @@ class TransducerSearcher(object):
         self.state_beam = state_beam
         self.expand_beam = expand_beam
         self.beam_size = beam_size
-        self.pool = Pool(processes=16)
 
     def set_eval(self):
         self.pred_net.eval()
@@ -25,8 +23,8 @@ class TransducerSearcher(object):
         n_match_score = [0] * B
         with torch.no_grad():
             for i in range(B):
-                # best_match, match_score = self.search_single(encs, i)
-                best_match, match_score = self.pool.apply_asyc(self.search_single, (encs, i))
+                best_match, match_score = self.search_single(encs, i)
+                # best_match, match_score = self.pool.apply_asyc(self.search_single, (encs, i))
                 n_best_match[i] = best_match
                 n_match_score[i] = match_score
         return n_best_match, n_match_score

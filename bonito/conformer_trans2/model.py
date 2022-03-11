@@ -53,20 +53,22 @@ class Model(nn.Module):
         self.n_base = self.state_len - 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
+        self.ln = nn.LayerNorm(config['encoder']['features'])
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
         self.searcher = TransducerSearcher(self.pred_net, 0, 2, 2.3, 2.3)
         self.criterion = TransducerLoss()
         self._freeze = self._load_pretrain_enc()
 
     def train(self):
-        super().train()
         self.encoder.train()
         self.enc_linear.train()
+        self.ln.train()
         self.pred_net.train()
 
     def eval(self):
         self.encoder.eval()
         self.enc_linear.eval()
+        self.ln.eval()
         self.pred_net.eval()
         # self.joint_net.eval()
 
@@ -100,6 +102,7 @@ class Model(nn.Module):
                 enc = self.encoder(x)
         else:
             enc = self.encoder(x)
+        enc = self.ln(enc)
         enc = self.enc_linear(enc)
         return enc
 
@@ -146,6 +149,12 @@ class Model(nn.Module):
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=enc.device)
         raw_targets = raw_targets.type_as(logit_lengths)
         target_lengths = target_lengths.type_as(logit_lengths)
+        enc_norm = torch.norm(enc.detach(), p=2,  dim=2)
+        pred_norm = torch.norm(preds.detach(), p=2,  dim=2)
+        print("enc norm is: ")
+        print(enc_norm)
+        print("pred norm is: ")
+        print(pred_norm)
         return self.criterion(enc, preds, raw_targets, logit_lengths, target_lengths).mean()
 
     def prepend(self, x, val):
@@ -162,6 +171,7 @@ class PredNet(nn.Module):
         self.rnn = nn.LSTM(emb_dim, hid_dim, num_layers=1, batch_first=True)
         self.emb = nn.Embedding(alphabet, emb_dim)
         self.linear = nn.Linear(hid_dim, alphabet)
+        self.ln = nn.LayerNorm(hid_dim)
 
     def forward(self, x, hidden=None):
         emb = self.emb(x)
@@ -170,6 +180,7 @@ class PredNet(nn.Module):
             output, new_h = self.rnn(emb)
         else:
             output, new_h = self.rnn(emb, hidden)
+        output = self.ln(output)
         output = self.linear(output)
         return output, new_h
 
