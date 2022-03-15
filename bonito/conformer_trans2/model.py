@@ -184,6 +184,18 @@ class PredNet(nn.Module):
         output = self.linear(output)
         return output, new_h
 
+    def init_hid(self, dtype, device, bs=1):
+        num_directions = 2 if self.rnn.bidirectional else 1
+        real_hidden_size = self.rnn.proj_size if self.rnn.proj_size > 0 else self.rnn.hidden_size
+        h_zeros = torch.zeros(self.rnn.num_layers * num_directions,
+                              bs, real_hidden_size,
+                              dtype=dtype, device=device)
+        c_zeros = torch.zeros(self.rnn.num_layers * num_directions,
+                              bs, self.hidden_size,
+                              dtype=dtype, device=device)
+        hx = (h_zeros, c_zeros)
+        return hx
+
 
 class JointNet(nn.Module):
     def __init__(self, alphabet, hid_dim=512, dropout=0.1):
