@@ -16,7 +16,7 @@ from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, la
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
 from bonito import util as bo_util
-from .searcher import TransducerSearcher
+from .searcher2 import TransducerSearcher
 
 
 def get_stride(m):
