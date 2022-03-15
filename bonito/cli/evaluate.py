@@ -37,6 +37,7 @@ def main(args):
         batch_size=args.batchsize, num_workers=4, pin_memory=True,
         **valid_loader_kwargs
     )
+    print(f"num of data's is: {len(dataloader)}")
 
     accuracy_with_cov = lambda ref, seq: accuracy(ref, seq, min_coverage=args.min_coverage)
     t_enc = 0
