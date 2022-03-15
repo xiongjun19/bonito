@@ -1,6 +1,7 @@
 # coding=utf8
 
 import torch
+import numpy as np
 from typing import Dict, Optional
 from typing import List, Any
 from dataclasses import dataclass
@@ -21,14 +22,14 @@ class TransducerSearcher(object):
         n_match_score = [0] * B
         with torch.no_grad():
             for i in range(B):
-                best_match, match_score = self.search_single(encs, i)
+                best_match = self.search_single(encs, i)
                 # best_match, match_score = self.pool.apply_asyc(self.search_single, (encs, i))
                 n_best_match[i] = best_match
-                n_match_score[i] = match_score
+                n_match_score[i] = None 
         return n_best_match, n_match_score
 
     def search_single(self, encoder_out, i_batch):
-        device = self.pred_net.device
+        device = encoder_out.device
         T = encoder_out.size(1)
         B = HypothesisList()
         B.add(
@@ -90,7 +91,7 @@ class TransducerSearcher(object):
 
         # logits is of shape (num_hyps, vocab_size)
         log_probs = joint_logits.log_softmax(dim=-1)
-        return log_probs.squeeze(), new_hid
+        return log_probs.squeeze(1).squeeze(1), new_hid
 
     def _init_hids(self, A):
         c_list = zip(*[hyp.hid for hyp in A])
@@ -116,7 +117,7 @@ class Hypothesis:
 
 
 class HypothesisList(object):
-    def __init__(self, data: Optional[Dict[str, Hypothesis]] = None):
+    def __init__(self, data: Optional[Dict[str, Hypothesis]] = None) -> None:
         """
         Args:
           data:
@@ -128,36 +129,37 @@ class HypothesisList(object):
             self._data = data
 
     @property
-    def data(self):
+    def data(self) -> Dict[str, Hypothesis]:
         return self._data
 
-    #  def add(self, ys: List[int], log_prob: float):
-    def add(self, hyp: Hypothesis):
+    def add(self, hyp: Hypothesis) -> None:
         """Add a Hypothesis to `self`.
-
         If `hyp` already exists in `self`, its probability is updated using
         `log-sum-exp` with the existed one.
-
         Args:
           hyp:
             The hypothesis to be added.
         """
         key = hyp.key
         if key in self:
-            old_hyp = self._data[key]
-            old_hyp.log_prob = np.logaddexp(old_hyp.log_prob, hyp.log_prob)
+            old_hyp = self._data[key]  # shallow copy
+            # torch.logaddexp(
+            #     old_hyp.log_prob, hyp.log_prob, out=old_hyp.log_prob
+            # )
+            old_hyp.log_prob = torch.logsumexp(
+                torch.cat([old_hyp.log_prob.view([1]), hyp.log_prob.view([1])],  dim=0),0) 
         else:
             self._data[key] = hyp
 
     def get_most_probable(self, length_norm: bool = False) -> Hypothesis:
         """Get the most probable hypothesis, i.e., the one with
         the largest `log_prob`.
-
         Args:
           length_norm:
             If True, the `log_prob` of a hypothesis is normalized by the
             number of tokens in it.
-
+        Returns:
+          Return the hypothesis that has the largest `log_prob`.
         """
         if length_norm:
             return max(
@@ -168,7 +170,8 @@ class HypothesisList(object):
 
     def remove(self, hyp: Hypothesis) -> None:
         """Remove a given hypothesis.
-
+        Caution:
+          `self` is modified **in-place**.
         Args:
           hyp:
             The hypothesis to be removed from `self`.
@@ -179,18 +182,16 @@ class HypothesisList(object):
         assert key in self, f"{key} does not exist"
         del self._data[key]
 
-    def filter(self, threshold: float) -> "HypothesisList":
+    def filter(self, threshold: torch.Tensor) -> "HypothesisList":
         """Remove all Hypotheses whose log_prob is less than threshold.
-
         Caution:
           `self` is not modified. Instead, a new HypothesisList is returned.
-
         Returns:
           Return a new HypothesisList containing all hypotheses from `self`
-          that have `log_prob` being greater than the given `threshold`.
+          with `log_prob` being greater than the given `threshold`.
         """
         ans = HypothesisList()
-        for key, hyp in self._data.items():
+        for _, hyp in self._data.items():
             if hyp.log_prob > threshold:
                 ans.add(hyp)  # shallow copy
         return ans
@@ -218,3 +219,5 @@ class HypothesisList(object):
         for key in self:
             s.append(key)
         return ", ".join(s)
+
+

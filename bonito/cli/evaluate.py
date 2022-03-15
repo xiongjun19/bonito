@@ -13,7 +13,7 @@ from pathlib import Path
 from bonito.data import load_numpy, load_script
 from bonito.util import accuracy, poa, decode_ref, half_supported
 from bonito.util import init, load_model, concat, permute
-
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 
@@ -56,7 +56,7 @@ def main(args):
         targets = []
 
         with torch.no_grad():
-            for data, target, *_ in dataloader:
+            for data, target, *_ in tqdm(dataloader):
                 targets.extend(torch.unbind(target, 0))
                 if half_supported():
                     data = data.type(torch.float16).to(args.device)
@@ -67,7 +67,9 @@ def main(args):
                 t_enc += (time.perf_counter() - t1)
                 t2 = time.perf_counter()
                 if hasattr(model, 'decode_batch'):
-                    seqs.extend(model.decode_batch(log_probs))
+                    decs = model.decode_batch(log_probs)
+                    print(decs)
+                    seqs.extend(decs)
                 else:
                     seqs.extend([model.decode(p) for p in permute(log_probs, 'TNC', 'NTC')])
                 t_dec += (time.perf_counter() - t2)

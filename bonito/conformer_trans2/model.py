@@ -16,7 +16,7 @@ from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, la
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
 from bonito import util as bo_util
-from .searcher2 import TransducerSearcher
+from .searcher import TransducerSearcher
 
 
 def get_stride(m):
@@ -149,12 +149,12 @@ class Model(nn.Module):
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=enc.device)
         raw_targets = raw_targets.type_as(logit_lengths)
         target_lengths = target_lengths.type_as(logit_lengths)
-        enc_norm = torch.norm(enc.detach(), p=2,  dim=2)
-        pred_norm = torch.norm(preds.detach(), p=2,  dim=2)
-        print("enc norm is: ")
-        print(enc_norm)
-        print("pred norm is: ")
-        print(pred_norm)
+        # enc_norm = torch.norm(enc.detach(), p=2,  dim=2)
+        # pred_norm = torch.norm(preds.detach(), p=2,  dim=2)
+        # print("enc norm is: ")
+        # print(enc_norm)
+        # print("pred norm is: ")
+        # print(pred_norm)
         return self.criterion(enc, preds, raw_targets, logit_lengths, target_lengths).mean()
 
     def prepend(self, x, val):
@@ -191,7 +191,7 @@ class PredNet(nn.Module):
                               bs, real_hidden_size,
                               dtype=dtype, device=device)
         c_zeros = torch.zeros(self.rnn.num_layers * num_directions,
-                              bs, self.hidden_size,
+                              bs, self.rnn.hidden_size,
                               dtype=dtype, device=device)
         hx = (h_zeros, c_zeros)
         return hx
