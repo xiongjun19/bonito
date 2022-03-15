@@ -53,7 +53,7 @@ class Model(nn.Module):
         self.n_base = self.state_len - 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
-        self.ln = nn.LayerNorm(config['encoder']['features'])
+        # self.ln = nn.LayerNorm(config['encoder']['features'])
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
         self.searcher = TransducerSearcher(self.pred_net, 0, 2, 2.3, 2.3)
         self.criterion = TransducerLoss()
@@ -62,13 +62,13 @@ class Model(nn.Module):
     def train(self):
         self.encoder.train()
         self.enc_linear.train()
-        self.ln.train()
+        # self.ln.train()
         self.pred_net.train()
 
     def eval(self):
         self.encoder.eval()
         self.enc_linear.eval()
-        self.ln.eval()
+        # self.ln.eval()
         self.pred_net.eval()
         # self.joint_net.eval()
 
@@ -102,7 +102,7 @@ class Model(nn.Module):
                 enc = self.encoder(x)
         else:
             enc = self.encoder(x)
-        enc = self.ln(enc)
+        # enc = self.ln(enc)
         enc = self.enc_linear(enc)
         return enc
 
@@ -171,7 +171,7 @@ class PredNet(nn.Module):
         self.rnn = nn.LSTM(emb_dim, hid_dim, num_layers=1, batch_first=True)
         self.emb = nn.Embedding(alphabet, emb_dim)
         self.linear = nn.Linear(hid_dim, alphabet)
-        self.ln = nn.LayerNorm(hid_dim)
+        # self.ln = nn.LayerNorm(hid_dim)
 
     def forward(self, x, hidden=None):
         emb = self.emb(x)
@@ -180,7 +180,7 @@ class PredNet(nn.Module):
             output, new_h = self.rnn(emb)
         else:
             output, new_h = self.rnn(emb, hidden)
-        output = self.ln(output)
+        # output = self.ln(output)
         output = self.linear(output)
         return output, new_h
 
