@@ -16,16 +16,9 @@ class TransducerSearcher(object):
         self.beam_size = beam_size
 
     def beam_search(self, encs):
-        B = encs.size()[0]
-        n_best_match = [0] * B
-        n_match_score = [0] * B
         with torch.no_grad():
-            for i in range(B):
-                best_match = self.search_single(encs, i)
-                # best_match, match_score = self.pool.apply_asyc(self.search_single, (encs, i))
-                n_best_match[i] = best_match
-                n_match_score[i] = None
-        return n_best_match, n_match_score
+            best_match = self.search_single(encs)
+        return best_match, None 
 
     def search_single(self, encoder_out):
         device = encoder_out.device
@@ -97,7 +90,7 @@ class TransducerSearcher(object):
             new_hyp = Hypothesis(ys=new_ys, log_prob=new_log_prob, hid=new_hid)
             b_hyp_list.add(new_hyp)
 
-    def comp_trans_probs(self, enc, A, i_batch, t, device, beam_indices):
+    def comp_trans_probs(self, enc, A, t, device, beam_indices):
         current_encoder_out = enc[:, t:t+1, :]
         # current_encoder_out is of shape (bs * beam, 1, encoder_out_dim)
         len_arr, input_ids, hids, prev_score = A.get_inputs(self.beam_size, self.blank_id)
@@ -113,7 +106,7 @@ class TransducerSearcher(object):
     def _mask_pad_probs(self, probs, beam_indices, len_arr):
         mask = beam_indices >= len_arr
         mask = mask.view(-1, 1)
-        res = probs.mask_fill(mask, -1e-9)
+        res = probs.masked_fill(mask, -1e+4)
         return res
 
     def _get_beam_indices(self, bs, beam):

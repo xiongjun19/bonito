@@ -16,7 +16,7 @@ from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, la
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
 from bonito import util as bo_util
-from .searcher import TransducerSearcher
+from .searcher3 import TransducerSearcher
 
 
 def get_stride(m):
@@ -55,7 +55,7 @@ class Model(nn.Module):
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
         # self.ln = nn.LayerNorm(config['encoder']['features'])
         self.pred_net = PredNet(self.state_len, **config['pred_net'])
-        self.searcher = TransducerSearcher(self.pred_net, 0, 2, 2.3, 2.3)
+        self.searcher = TransducerSearcher(self.pred_net, 0, 5, 2.3, 2.3)
         self.criterion = TransducerLoss()
         self._freeze = self._load_pretrain_enc()
 
