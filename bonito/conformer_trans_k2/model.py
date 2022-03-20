@@ -56,7 +56,7 @@ class Model(nn.Module):
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
         self.pred_net = PredNet(self.state_len, self.blank_id,  **config['pred_net'])
         self.joint = JointNet(self.state_len, self.state_len, **config['joint'])
-        self.searcher = TransducerSearcher(self.pred_net, self.blank_id, 2, 2.3, 2.3)
+        self.searcher = TransducerSearcher(self.pred_net, self.joint, self.blank_id, 4, 2.3, 2.3)
         self._freeze = self._load_pretrain_enc()
 
     # def train(self):

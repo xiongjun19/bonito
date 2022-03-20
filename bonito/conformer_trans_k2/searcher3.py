@@ -7,25 +7,19 @@ from dataclasses import dataclass
 
 
 class TransducerSearcher(object):
-    def __init__(self, pred_net, blank_id,
+    def __init__(self, pred_net, joint_net, blank_id,
                  beam_size=2, state_beam=2.3, expand_beam=2.3):
         self.pred_net = pred_net
+        self.joint_net = joint_net
         self.blank_id = blank_id
         self.state_beam = state_beam
         self.expand_beam = expand_beam
         self.beam_size = beam_size
 
     def beam_search(self, encs):
-        B = encs.size()[0]
-        n_best_match = [0] * B
-        n_match_score = [0] * B
         with torch.no_grad():
-            for i in range(B):
-                best_match = self.search_single(encs, i)
-                # best_match, match_score = self.pool.apply_asyc(self.search_single, (encs, i))
-                n_best_match[i] = best_match
-                n_match_score[i] = None
-        return n_best_match, n_match_score
+            best_match = self.search_single(encs)
+        return best_match, None
 
     def search_single(self, encoder_out):
         device = encoder_out.device
@@ -40,8 +34,8 @@ class TransducerSearcher(object):
         for t in range(T):
             A = B
             B = BatchList(bs, device)
-            log_probs, new_hid = self.comp_trans_probs(encoder_out, A, t,  device, beam_idxes)
-            self._update_beam(log_probs, new_hid, A, B, device, bs)
+            log_probs = self.comp_trans_probs(encoder_out, A, t,  device, beam_idxes)
+            self._update_beam(log_probs, A, B, device, bs)
 
         best_hyps = [hyp_list.get_most_probable(length_norm=True) for hyp_list in B]
         ys_arr = [best_hyp.ys[:] for best_hyp in best_hyps]
@@ -51,9 +45,8 @@ class TransducerSearcher(object):
         res = BatchList(bs, device)
         for hyp_list in res:
             hyp = Hypothesis(
-                ys=[self.blank_id],
+                ys=[self.blank_id] * self.pred_net.context_size,
                 log_prob=torch.zeros(1, dtype=torch.float32, device=device),
-                hid=self.pred_net.init_hid(data_type, device, 1)
             )
             hyp_list.add(hyp)
         return res
@@ -61,7 +54,7 @@ class TransducerSearcher(object):
     def reorder_enc(self, enc, new_order):
         return enc.index_select(0, new_order)
 
-    def _update_beam(self, log_probs, next_hid, A, B, device, batch_size):
+    def _update_beam(self, log_probs, A, B, device, batch_size):
         voc_size = log_probs.size(-1)
         log_probs = log_probs.reshape(batch_size, -1)
         topk_log_probs, topk_indexes = log_probs.topk(self.beam_size, dim=-1)
@@ -78,42 +71,45 @@ class TransducerSearcher(object):
             a_hyp_list = A[i_batch]
             b_hyp_list = B[i_batch]
             self._update_beam_single(i_batch, k_hyp_idxes, k_token_idxes,
-                                     a_hyp_list, b_hyp_list, next_hid, topk_log_probs)
+                                     a_hyp_list, b_hyp_list, topk_log_probs)
 
     def _update_beam_single(self, i_batch, k_hyp_idxes, k_token_idxes,
-                            a_hyp_list, b_hyp_list, next_hid, topk_log_probs):
+                            a_hyp_list, b_hyp_list, topk_log_probs):
         a_hyp_list = list(a_hyp_list)
         for i in range(len(k_hyp_idxes)):
             b_idx = k_hyp_idxes[i]
             hyp = a_hyp_list[b_idx]
             new_ys = hyp.ys[:]
-            new_hid = hyp.hid
             new_token = k_token_idxes[i]
             if new_token != self.blank_id:
                 new_ys.append(new_token)
-                h_idx = i_batch * self.beam_size + b_idx
-                new_hid = tuple([x[:, h_idx:h_idx + 1] for x in next_hid])
             new_log_prob = topk_log_probs[i_batch, i]
-            new_hyp = Hypothesis(ys=new_ys, log_prob=new_log_prob, hid=new_hid)
+            new_hyp = Hypothesis(ys=new_ys, log_prob=new_log_prob)
             b_hyp_list.add(new_hyp)
 
-    def comp_trans_probs(self, enc, A, i_batch, t, device, beam_indices):
+    def comp_trans_probs(self, enc, A, t, device, beam_indices):
         current_encoder_out = enc[:, t:t+1, :]
         # current_encoder_out is of shape (bs * beam, 1, encoder_out_dim)
-        len_arr, input_ids, hids, prev_score = A.get_inputs(self.beam_size, self.blank_id)
-        decoder_out, new_hid = self.pred_net(input_ids, hids)
+        len_arr, input_ids, prev_score = A.get_inputs(self.beam_size, self.blank_id, self.pred_net.context_size)
+        decoder_out = self.pred_net(input_ids, need_pad=False)
         # decoder_output is of shape (bs * beam, 1, decoder_output_dim)
-        joint_logits = current_encoder_out.unsqueeze(2) + decoder_out.unsqueeze(1)
-        # logits is of shape (num_hyps, vocab_size)
-        log_probs = joint_logits.log_softmax(dim=-1).squeeze(1).squeeze(1)
+        logits = self.joint_net(
+            current_encoder_out.unsqueeze(2),
+            decoder_out.unsqueeze(1)
+        )
+        # logits is of shape (num_hyps, 1, 1, vocab_size)
+        logits = logits.squeeze(1).squeeze(1)
+
+        # now logits is of shape (num_hyps, vocab_size)
+        log_probs = logits.log_softmax(dim=-1)
         log_probs.add_(prev_score)
         log_probs = self._mask_pad_probs(log_probs, beam_indices, len_arr)
-        return log_probs, new_hid
+        return log_probs
 
     def _mask_pad_probs(self, probs, beam_indices, len_arr):
         mask = beam_indices >= len_arr
         mask = mask.view(-1, 1)
-        res = probs.mask_fill(mask, -1e-9)
+        res = probs.masked_fill(mask, -1e+4)
         return res
 
     def _get_beam_indices(self, bs, beam):
@@ -130,7 +126,7 @@ class Hypothesis:
 
     # The log prob of ys
     log_prob: float
-    hid: Any = None
+    # hid: Any = None
 
     @property
     def key(self) -> str:
@@ -260,14 +256,14 @@ class BatchList(object):
     def __iter__(self):
         return iter(self.batches)
 
-    def get_inputs(self, beam_size, blank_id):
+    def get_inputs(self, beam_size, blank_id, context_size):
         len_arr = [[len(hyp_list)] for hyp_list in self.batches]
         len_arr = torch.tensor(len_arr, device=self.device)
         paded_hyps = self._pad_batches(beam_size)
-        input_ids = self.get_input_ts(paded_hyps)
-        hids = self.get_hid_ts(paded_hyps)
+        input_ids = self.get_input_ts(paded_hyps, context_size)
+        # hids = self.get_hid_ts(paded_hyps)
         prev_scores = self.get_scores(paded_hyps)
-        return len_arr, input_ids, hids, prev_scores
+        return len_arr, input_ids, prev_scores
 
     def _pad_batches(self, beam_size):
         res = [
@@ -282,12 +278,12 @@ class BatchList(object):
         hyps = hyps + [hyps[0]] * (beam_size - len(hyps))
         return hyps
 
-    def get_input_ts(self, pad_hyps):
+    def get_input_ts(self, pad_hyps, context_size):
         list_arr = [
-            [hyp.ys[-1:] for hyp in hyp_list]
+            [hyp.ys[-context_size:] for hyp in hyp_list]
             for hyp_list in pad_hyps
         ]
-        input_ids = torch.tensor(list_arr, device=self.device).view(-1, 1)
+        input_ids = torch.tensor(list_arr, device=self.device).view(-1, context_size)
         return input_ids
 
     def get_hid_ts(self, paded_hyps):
