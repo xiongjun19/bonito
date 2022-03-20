@@ -6,7 +6,7 @@ RUN pip3 install torch==1.10.1+cu113 torchvision==0.11.2+cu113 torchaudio==0.10.
 COPY lt_req.txt .
 RUN pip3 install -r lt_req.txt
 
-RUN git clone clone https://github.com/k2-fsa/k2.git && \
+RUN git clone https://github.com/k2-fsa/k2.git && \
     cd k2 && \
     python3 setup.py install
 
