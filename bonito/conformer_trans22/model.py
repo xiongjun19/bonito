@@ -118,7 +118,7 @@ class Model(nn.Module):
     def _scores2ids(self, score_list):
         if len(score_list) > 0:
             offset = self.n_gram - 1
-            res = [0] * (self.len(score_list) + self.n_gram - 1)
+            res = [0] * (len(score_list) + self.n_gram - 1)
             for score in score_list:
                 new_score = score % self.n_base + 1
                 res[offset] = new_score
@@ -167,9 +167,10 @@ class Model(nn.Module):
         raw_targets_arr = [raw_targets[:, i:(padded_len - self.n_gram + 1 + i)].unsqueeze(0) * (self.n_base ** (self.n_gram - 1 -i))
                            for i in range(self.n_gram)]
         res_targets = torch.cat(raw_targets_arr, 0).sum(dim=0) + 1
-        idx_ts = torch.arange(padded_len).unsqueeze(0).repeat(bs, 1)
-        mask = idx_ts >= res_lens
-        res_targets = res_targets.mask_fill(mask, 0)
+        idx_ts = torch.arange(padded_len - self.n_gram + 1).unsqueeze(0).repeat(bs, 1)
+        idx_ts = idx_ts.to(targets.device)
+        mask = idx_ts >= res_lens.unsqueeze(1)
+        res_targets = res_targets.masked_fill(mask, 0)
         return res_targets, res_lens
 
     def prepend(self, x, val):
