@@ -120,10 +120,11 @@ class Model(nn.Module):
             offset = self.n_gram - 1
             res = [0] * (len(score_list) + self.n_gram - 1)
             for score in score_list:
+                score -= 1
                 new_score = score % self.n_base + 1
                 res[offset] = new_score
                 offset += 1
-            begin_score = score_list[0]
+            begin_score = score_list[0] - 1
             for i in range(self.n_base):
                 base = self.n_base ** (self.n_gram - 1 -i)
                 val = begin_score // base  % self.n_base + 1

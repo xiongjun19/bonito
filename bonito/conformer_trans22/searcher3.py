@@ -37,7 +37,7 @@ class TransducerSearcher(object):
             self._update_beam(log_probs, new_hid, A, B, device, bs)
 
         best_hyps = [hyp_list.get_most_probable(length_norm=True) for hyp_list in B]
-        ys_arr = [best_hyp.ys[:] for best_hyp in best_hyps]
+        ys_arr = [best_hyp.ys[1:] for best_hyp in best_hyps]
         return ys_arr
 
     def _init_batch_list(self, bs, data_type, device):
