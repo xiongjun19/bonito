@@ -10,7 +10,7 @@ import math
 from typing import Optional
 from torchaudio import transforms
 from collections import OrderedDict
-from transducer import TransducerLoss
+import k2
 
 from bonito.nn import Module, Convolution, LinearCRFEncoder, Serial, Permute, layers, from_dict
 from .conformer import ConformerEncoder
@@ -47,30 +47,30 @@ def transformer_encoder(n_base, state_len, insize=1, stride=5, winlen=19, activa
 class Model(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.blank_id=0
         self.config = config
         self.state_len = config['global_norm']['state_len']
         self.alphabet = config['labels']['labels']
         self.n_base = self.state_len - 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
         self.enc_linear = nn.Linear(config['encoder']['features'], self.state_len)
-        # self.ln = nn.LayerNorm(config['encoder']['features'])
-        self.pred_net = PredNet(self.state_len, **config['pred_net'])
-        self.searcher = TransducerSearcher(self.pred_net, 0, 5, 2.3, 2.3)
-        self.criterion = TransducerLoss()
+        self.pred_net = PredNet(self.state_len, self.blank_id,  **config['pred_net'])
+        self.joint = JointNet(self.state_len, self.state_len, **config['joint'])
+        self.searcher = TransducerSearcher(self.pred_net, self.joint, self.blank_id, 4, 2.3, 2.3)
         self._freeze = self._load_pretrain_enc()
 
-    def train(self):
-        self.encoder.train()
-        self.enc_linear.train()
-        # self.ln.train()
-        self.pred_net.train()
+    # def train(self):
+    #     self.encoder.train()
+    #     self.enc_linear.train()
+    #     # self.ln.train()
+    #     self.pred_net.train()
 
-    def eval(self):
-        self.encoder.eval()
-        self.enc_linear.eval()
-        # self.ln.eval()
-        self.pred_net.eval()
-        # self.joint_net.eval()
+    # def eval(self):
+    #     self.encoder.eval()
+    #     self.enc_linear.eval()
+    #     # self.ln.eval()
+    #     self.pred_net.eval()
+    #     # self.joint_net.eval()
 
     def _load_pretrain_enc(self):
         if 'pretrain' in self.config:
@@ -83,8 +83,8 @@ class Model(nn.Module):
                 self.encoder.load_state_dict(state_dict)
                 self.encoder.eval()
                 return True
-        return False 
-    
+        return False
+
     def match_names(self, state_dict, model):
         keys_and_shapes = lambda state_dict: zip(*[
             (k, s) for s, i, k in sorted([(v.shape, i, k)
@@ -102,7 +102,6 @@ class Model(nn.Module):
                 enc = self.encoder(x)
         else:
             enc = self.encoder(x)
-        # enc = self.ln(enc)
         enc = self.enc_linear(enc)
         return enc
 
@@ -110,24 +109,6 @@ class Model(nn.Module):
         n_best_match, n_match_score = self.searcher.beam_search(scores)
         res = [self._ids_to_str(match) for match in n_best_match]
         return res
-    # def decode_batch(self, scores):
-    #     B, T, *_ = scores.size()
-    #     logit_lengths = torch.full((B, ), T, dtype=torch.int, device=scores.device)
-    #     y = torch.full([B, 1], 0, dtype=torch.int32, device=scores.device)
-    #     cur_len = 0
-    #     for i in range(T):
-    #         old_y = y
-    #         preds, _ = self.pred_net(old_y)
-    #         label_lengths = torch.full((B, ), cur_len, dtype=torch.int, device=scores.device)
-    #         y = self.criterion.viterbi(scores, preds,logit_lengths, label_lengths)
-    #         b, new_len = y.shape
-    #         if new_len < 1:
-    #            break
-    #         print("shape of y is: ", y.shape)
-    #         cur_len = new_len
-    #
-    #     res = [self._ids_to_str(match) for match in y]
-    #     return res
 
     def _ids_to_str(self, ids):
         res = [self.alphabet[_id] for _id in ids if _id > 0]
@@ -140,22 +121,60 @@ class Model(nn.Module):
          target_lengths  containing lengths of eatch sequence from encoder
         """  
         raw_targets = torch.clone(targets)
-        targets = self.prepend(targets, 0)
+        targets = self.prepend(targets, self.blank_id)
         max_len = torch.max(target_lengths)
         targets = targets[:, :max_len+1]
         raw_targets = raw_targets[:, :max_len]
-        preds, hid = self.pred_net(targets)
+        preds = self.pred_net(targets)
+
         B, T, *_ = enc.size()
         logit_lengths = torch.full((B, ), T, dtype=torch.int, device=enc.device)
-        raw_targets = raw_targets.type_as(logit_lengths)
         target_lengths = target_lengths.type_as(logit_lengths)
-        # enc_norm = torch.norm(enc.detach(), p=2,  dim=2)
-        # pred_norm = torch.norm(preds.detach(), p=2,  dim=2)
-        # print("enc norm is: ")
-        # print(enc_norm)
-        # print("pred norm is: ")
-        # print(pred_norm)
-        return self.criterion(enc, preds, raw_targets, logit_lengths, target_lengths).mean()
+
+        boundary = torch.zeros(
+            (enc.size(0), 4), dtype=torch.int64, device=enc.device
+        )
+        boundary[:, 2] = target_lengths
+        boundary[:, 3] = logit_lengths
+
+        lm_scale = 0.25
+        am_scale = 0.0
+        simple_loss, (px_grad, py_grad) = k2.rnnt_loss_smoothed(
+            lm=preds,
+            am=enc,
+            symbols=raw_targets,
+            termination_symbol=self.blank_id,
+            lm_only_scale=lm_scale,
+            am_only_scale=am_scale,
+            boundary=boundary,
+            reduction="sum",
+            return_grad=True,
+        )
+
+        prune_range = 5
+        # ranges : [B, T, prune_range]
+        ranges = k2.get_rnnt_prune_ranges(
+            px_grad=px_grad,
+            py_grad=py_grad,
+            boundary=boundary,
+            s_range=prune_range,
+        )
+
+        am_pruned, lm_pruned = k2.do_rnnt_pruning(
+            am=enc, lm=preds, ranges=ranges
+        )
+
+        logits = self.joint(am_pruned, lm_pruned)
+        pruned_loss = k2.rnnt_loss_pruned(
+            logits=logits,
+            symbols=raw_targets,
+            ranges=ranges,
+            termination_symbol=self.blank_id,
+            boundary=boundary,
+            reduction="sum",
+        )
+        loss = 0.5 * simple_loss + pruned_loss
+        return loss
 
     def prepend(self, x, val):
         B = x.size()[0]
@@ -165,68 +184,102 @@ class Model(nn.Module):
 
 
 class PredNet(nn.Module):
-    def __init__(self, alphabet, emb_dim=512, hid_dim=512, layers=1, dropout=0.1):
+    def __init__(
+        self,
+        vocab_size: int,
+        blank_id: int,
+        emb_dim=512,
+        context_size=5,
+        dropout=0.1
+    ):
+        """
+        Args:
+          vocab_size:
+            Number of tokens of the modeling unit including blank.
+          emb_dim:
+            Dimension of the input embedding.
+          blank_id:
+            The ID of the blank symbol.
+          context_size:
+            Number of previous words to use to predict the next word.
+            1 means bigram; 2 means trigram. n means (n+1)-gram.
+        """
         super().__init__()
+        self.embedding = nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=emb_dim,
+            padding_idx=blank_id,
+        )
+        self.blank_id = blank_id
         self.dropout = nn.Dropout(dropout)
-        self.rnn = nn.LSTM(emb_dim, hid_dim, num_layers=1, batch_first=True)
-        self.emb = nn.Embedding(alphabet, emb_dim)
-        self.linear = nn.Linear(hid_dim, alphabet)
-        # self.ln = nn.LayerNorm(hid_dim)
 
-    def forward(self, x, hidden=None):
-        emb = self.emb(x)
-        emb = self.dropout(emb)
-        if hidden is None:
-            output, new_h = self.rnn(emb)
-        else:
-            output, new_h = self.rnn(emb, hidden)
-        # output = self.ln(output)
-        output = self.linear(output)
-        return output, new_h
+        assert context_size >= 1, context_size
+        self.context_size = context_size
+        if context_size > 1:
+            self.conv = nn.Conv1d(
+                in_channels=emb_dim,
+                out_channels=emb_dim,
+                kernel_size=context_size,
+                padding=0,
+                groups=emb_dim,
+                bias=False,
+            )
+        self.output_linear = nn.Linear(emb_dim, vocab_size)
 
-    def init_hid(self, dtype, device, bs=1):
-        num_directions = 2 if self.rnn.bidirectional else 1
-        real_hidden_size = self.rnn.proj_size if self.rnn.proj_size > 0 else self.rnn.hidden_size
-        h_zeros = torch.zeros(self.rnn.num_layers * num_directions,
-                              bs, real_hidden_size,
-                              dtype=dtype, device=device)
-        c_zeros = torch.zeros(self.rnn.num_layers * num_directions,
-                              bs, self.rnn.hidden_size,
-                              dtype=dtype, device=device)
-        hx = (h_zeros, c_zeros)
-        return hx
+    def forward(self, y: torch.Tensor, need_pad: bool = True) -> torch.Tensor:
+        """
+        Args:
+          y:
+            A 2-D tensor of shape (N, U) with blank prepended.
+          need_pad:
+            True to left pad the input. Should be True during training.
+            False to not pad the input. Should be False during inference.
+        Returns:
+          Return a tensor of shape (N, U, embedding_dim).
+        """
+        embedding_out = self.embedding(y)
+        if self.context_size > 1:
+            embedding_out = embedding_out.permute(0, 2, 1)
+            if need_pad is True:
+                embedding_out = F.pad(
+                    embedding_out, pad=(self.context_size - 1, 0)
+                )
+            else:
+                # During inference time, there is no need to do extra padding
+                # as we only need one output
+                assert embedding_out.size(-1) == self.context_size
+            embedding_out = self.conv(embedding_out)
+            embedding_out = embedding_out.permute(0, 2, 1)
+        embedding_out = self.output_linear(F.relu(embedding_out))
+        return embedding_out
 
 
 class JointNet(nn.Module):
-    def __init__(self, alphabet, hid_dim=512, dropout=0.1):
+    def __init__(self, vocab_size, input_dim, inner_dim=32, dropout=0.1):
         super().__init__()
-        self.alphabet = alphabet
-        self.linear = nn.Linear(hid_dim, self.alphabet)
-        self.no_lin = nn.LeakyReLU(0.1)
+        self.inner_linear = nn.Linear(input_dim, inner_dim)
+        self.output_linear = nn.Linear(inner_dim, vocab_size)
+        self.dropout=nn.Dropout(dropout)
 
-    def forward(self, trans, preds):
+    def forward(
+        self, encoder_out: torch.Tensor, decoder_out: torch.Tensor
+    ) -> torch.Tensor:
         """
-            trans: [B, T, h];
-            preds: [B, U+1, h];
+        Args:
+          encoder_out:
+            Output from the encoder. Its shape is (N, T, s_range, C).
+          decoder_out:
+            Output from the decoder. Its shape is (N, T, s_range, C).
+        Returns:
+          Return a tensor of shape (N, T, s_range, C).
         """
-        new_trans = trans.unsqueeze(2)
-        new_preds = preds.unsqueeze(1)
-        joint = new_trans + new_preds
-        joint = self.linear(joint)
-        joint = self.no_lin(joint) 
-        probs = F.log_softmax(joint, dim=-1)
-        return joint 
+        assert encoder_out.ndim == decoder_out.ndim == 4
+        assert encoder_out.shape == decoder_out.shape
 
-    def pred_logits(self, trans, preds):
-        """
-            trans: [B, T, h];
-            preds: [B, U+1, h];
-        """
-        new_trans = trans.unsqueeze(2)
-        new_preds = preds.unsqueeze(1)
-        joint = new_trans + new_preds
-        logit = self.linear(joint)
-        return logit
+        logit = encoder_out + decoder_out
+        logit = self.inner_linear(torch.tanh(logit))
+        output = self.output_linear(F.relu(logit))
+        return output
 
 
 class CusEncoder(nn.Module):
@@ -249,6 +302,7 @@ class CusEncoder(nn.Module):
         self.pos_enc = RelPosEncXL(d_model)
         self.encoder = ConformerEncoder(num_layers, d_model, d_ffn, nhead,
                                         dropout=dropout)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -258,6 +312,8 @@ class CusEncoder(nn.Module):
     ):
         output = src
         pe = self.pos_enc(output)
+        pe = self.dropout(pe)
+        output = self.dropout(output)
         output, _ = self.encoder(output, src_mask, src_key_padding_mask,
                                  pos_embs=pe)
         return output
