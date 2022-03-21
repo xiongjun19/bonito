@@ -37,4 +37,4 @@ dropout = 0.1
 state_len = 5
 
 [pretrain]
-enc_path = "bonito/data/conf1_b32_e30_2_4/weights_4.tar"
+enc_path = "bonito/data/conf1_b32_e30_2_4/weights_20.tar"

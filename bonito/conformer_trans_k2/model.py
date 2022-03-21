@@ -132,7 +132,7 @@ class Model(nn.Module):
         target_lengths = target_lengths.type_as(logit_lengths)
 
         boundary = torch.zeros(
-            (x.size(0), 4), dtype=torch.int64, device=x.device
+            (enc.size(0), 4), dtype=torch.int64, device=enc.device
         )
         boundary[:, 2] = target_lengths
         boundary[:, 3] = logit_lengths
@@ -141,7 +141,7 @@ class Model(nn.Module):
         am_scale = 0.0
         simple_loss, (px_grad, py_grad) = k2.rnnt_loss_smoothed(
             lm=preds,
-            am=encoder_out,
+            am=enc,
             symbols=raw_targets,
             termination_symbol=self.blank_id,
             lm_only_scale=lm_scale,
@@ -217,14 +217,14 @@ class PredNet(nn.Module):
         self.context_size = context_size
         if context_size > 1:
             self.conv = nn.Conv1d(
-                in_channels=embedding_dim,
-                out_channels=embedding_dim,
+                in_channels=emb_dim,
+                out_channels=emb_dim,
                 kernel_size=context_size,
                 padding=0,
-                groups=embedding_dim,
+                groups=emb_dim,
                 bias=False,
             )
-        self.output_linear = nn.Linear(embedding_dim, vocab_size)
+        self.output_linear = nn.Linear(emb_dim, vocab_size)
 
     def forward(self, y: torch.Tensor, need_pad: bool = True) -> torch.Tensor:
         """
