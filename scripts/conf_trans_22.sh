@@ -6,11 +6,21 @@ mkdir ${dst_dir}
 dst_path="${dst_dir}/conf_trans_22_e5_3_5"
 conf='bonito/models/configs/dna_r9.4.1\@v_conf_trans22.toml'
 seed=42
-lr=2e-4
+lr=4e-3
 bs=32
-ep=10
+ep=3
 log_path='log_conf_trans_22.txt'
 
 # rm -r ${dst_path}  
 # CUDA_VISIBLE_DEVICES=0 nohup bonito train ${dst_path} -f --directory ${data_path} --config ${conf}  --lr $lr --epoch $ep --batch $bs --seed ${seed} --no-amp  > ${log_path} & 
+CUDA_VISIBLE_DEVICES=0 bonito train ${dst_path} -f --directory ${data_path} --config ${conf}  --lr $lr --epoch $ep --batch $bs --seed ${seed} --no-amp
+
+conf='bonito/models/configs/dna_r9.4.1\@v_conf_trans22_ft.toml'
+seed=42
+lr=1e-4
+bs=16
+ep=10
+log_path='log_conf_trans_22.txt'
+
+
 CUDA_VISIBLE_DEVICES=0 bonito train ${dst_path} -f --directory ${data_path} --config ${conf}  --lr $lr --epoch $ep --batch $bs --seed ${seed} --no-amp
