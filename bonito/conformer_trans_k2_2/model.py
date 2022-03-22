@@ -50,9 +50,9 @@ class Model(nn.Module):
         self.alphabet = config['labels']['labels']
         self.n_base = self.state_len - 1
         self.n_gram = 5
-        self.voc_size = self.n_base ** self.n_gram + 1
+        self.vocab_size = self.n_base ** self.n_gram + 1
         self.encoder = transformer_encoder(self.n_base, self.state_len, insize=config['input']['features'], **config['encoder'])
-        self.enc_linear = nn.Linear(config['encoder']['features'], self.voc_size)
+        self.enc_linear = nn.Linear(config['encoder']['features'], self.vocab_size)
         self.pred_net = PredNet(self.vocab_size, self.blank_id,  **config['pred_net'])
         self.joint = JointNet(self.vocab_size, self.vocab_size, **config['joint'])
         self.searcher = TransducerSearcher(self.pred_net, self.joint, self.blank_id, 4, 2.3, 2.3)
