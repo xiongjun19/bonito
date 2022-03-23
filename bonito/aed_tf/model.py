@@ -58,8 +58,8 @@ class Model(nn.Module):
                                            insize=config['input']['features'], **config['encoder'])
         self.decoder = Decoder(self.voc_size, self.blank_id, **config['decoder'])
         self.lb_sm = config['decoder'].get('lb_sm', 0.)
-        self.searcher = TransducerSearcher(self.pred_net, 0, 4, 2.3, 2.3)
-        self._freeze = self._load_pretrain_enc()
+        # self.searcher = TransducerSearcher(self.pred_net, 0, 4, 2.3, 2.3)
+        self._freeze = False
 
     def forward(self, x):
         if self._freeze:
@@ -129,12 +129,12 @@ class Model(nn.Module):
         bos_padding = torch.full((bs, 1), self.bos, device=x.device, dtype=x.dtype)
         res = torch.cat([bos_padding, x], dim=1)
         tail_padding = torch.full((bs, 1), self.blank_id, device=x.device, dtype=x.dtype)
-        res_tail = torch.cat([x, tail_padding])
+        res_tail = torch.cat([x, tail_padding], dim=1)
         res_tail.scatter_(1, target_lengths.unsqueeze(1), self.bos)
         res_lengths = target_lengths + 1
         return res, res_tail, res_lengths
 
-    def _get_mask(self, x, lengths):
+    def _get_mask(self, x):
         key_padding = (x == self.blank_id).detach()
         att_mask = get_lookahead_mask(x)
         return att_mask, key_padding
@@ -165,7 +165,8 @@ class Model(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, vocab_size, blank_id,
                  d_model=512, nhead=8,
-                 layers=6, dropout=0.1, normalize_before=True):
+                 layers=6, dropout=0.1, normalize_before=True,
+                 **kwargs):
         super().__init__()
         self.decoder = TransformerDecoder(
                 num_layers=layers,
@@ -238,7 +239,7 @@ class CusEncoder(nn.Module):
     ):
         output = self.norm(src)
         pe = self.pos_enc(output)
-        output = src + pe
+        output = output + pe
         output, _ = self.encoder(output, src_mask, src_key_padding_mask)
         return output
 
