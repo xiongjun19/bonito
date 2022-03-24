@@ -1,5 +1,6 @@
+# coding=utf8
 """
-Bonito CTC-CRF Model, replace rnn with transformer.
+transformer.
 """
 
 import torch
@@ -13,7 +14,7 @@ from bonito.nn import Convolution, Serial, Permute
 from .transformer import TransformerEncoder
 from .transformer import TransformerDecoder
 from .transformer import PositionalEncoding
-from .searcher3 import TransducerSearcher
+from .searcher import DecodeSearcher
 
 
 def get_stride(m):
@@ -58,7 +59,8 @@ class Model(nn.Module):
                                            insize=config['input']['features'], **config['encoder'])
         self.decoder = Decoder(self.voc_size, self.blank_id, **config['decoder'])
         self.lb_sm = config['decoder'].get('lb_sm', 0.)
-        # self.searcher = TransducerSearcher(self.pred_net, 0, 4, 2.3, 2.3)
+        self.searcher = DecodeSearcher(self.decoder, self.blank_id,
+                self.bos, **config['search'])
         self._freeze = False
 
     def forward(self, x):
@@ -71,11 +73,9 @@ class Model(nn.Module):
         return enc
 
     def decode_batch(self, scores):
-        b = scores.size(0)
-        res = [[0]] * b
-        # n_best_match, n_match_score = self.searcher.beam_search(scores)
-        # id_list = [self._scores2ids(match) for match in n_best_match]
-        # res = [self._ids_to_str(match) for match in id_list]
+        n_best_match, n_match_score = self.searcher.beam_search(scores)
+        id_list = [self._scores2ids(match) for match in n_best_match]
+        res = [self._ids_to_str(match) for match in id_list]
         return res
 
     def _scores2ids(self, score_list):
@@ -202,6 +202,11 @@ class Decoder(nn.Module):
             memory_key_padding_mask=src_key_padding_mask,
         )
         logits = self.linear(decoder_out)
+        return logits
+
+    def decode(self, x, enc_out):
+        tgt_mask = get_lookahead_mask(x)
+        logits = self(x, enc_out, tgt_mask=tgt_mask)
         return logits
 
 

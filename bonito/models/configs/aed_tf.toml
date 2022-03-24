@@ -17,7 +17,7 @@ scale = 1.0
 stride = 5
 winlen = 19
 scale = 5.0
-features = 512 
+features = 512
 rnn_type = "lstm"
 activation = "swish"
 blank_score = 2.0
@@ -25,11 +25,18 @@ num_layers=6
 dropout=0.1
 
 [decoder]
-d_model = 512 
-nhead = 8 
-layers = 3 
+d_model = 512
+nhead = 8
+layers = 3
 dropout = 0.1
 lb_sm = 0.01
+
+[search]
+beam_size = 4
+max_decode_ratio=0.8
+min_decode_ratio=0.0
+len_norm=True
+
 
 [global_norm]
 state_len = 5
