@@ -35,7 +35,7 @@ lb_sm = 0.01
 beam_size = 4
 max_decode_ratio=0.8
 min_decode_ratio=0.0
-len_norm=True
+len_norm=true
 
 
 [global_norm]

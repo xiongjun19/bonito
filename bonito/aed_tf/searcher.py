@@ -36,8 +36,9 @@ class DecodeSearcher(object):
         min_len = int(self.min_dec_ratio * time_steps)
         max_len = int(self.max_dec_ratio * time_steps)
         # init encoder_out
-        new_order = torch.arange(bs).view(-1, 1).repeat(1, self.beam_size).view(-1)
-        new_order = new_order.to(device).long()
+        new_order = torch.arange(bs, device=device, dtype=torch.int)
+        new_order = new_order.view(-1, 1).repeat(1, self.beam_size).view(-1)
+        # new_order = new_order.to(device).long()
         encoder_out = self.reorder_enc(encoder_out, new_order)
 
         for t in range(max_len + 1):
@@ -52,7 +53,7 @@ class DecodeSearcher(object):
             # update  hyps
             self._update_hyps(memory, eos_mask, top_scores, next_inp, finished_arr, result_dict)
             # update new scores and new input
-            prev_scores = top_scores.mask_fill(eos_mask, self.minus_inf)
+            prev_scores = top_scores.masked_fill(eos_mask, self.minus_inf)
             input_tgt = next_inp
 
         # when not finished
@@ -76,7 +77,7 @@ class DecodeSearcher(object):
         input_tgt = torch.full([bs * self.beam_size, 1], self.bos, device=device)
         prev_scores = torch.full([bs * self.beam_size, 1], self.minus_inf, device=device)
         beam_offset = torch.arange(bs, device=device) * self.beam_size
-        prev_scores.index_fill_(1, beam_offset, 0.)
+        prev_scores.index_fill_(0, beam_offset, 0.)
         memory = None
         finished_arr = [False] * bs
         result_dict = [HypothesisList() for _ in range(bs)]  # key 为batch_id, value 为所有已经搜索好路径的列表;
@@ -121,15 +122,15 @@ class DecodeSearcher(object):
     def _update_hyps(self, memory, eos_mask,
                      top_scores, next_inp,
                      finished_arr, result_dict):
-        eos_indices = torch.nonzero(eos_mask)[0]
+        eos_indices = torch.nonzero(eos_mask, as_tuple=True)[0]
         if eos_indices.shape[0] > 0:
-            eos_indices = eos_indices.numpy()
+            eos_indices = eos_indices.cpu().numpy()
             for index in eos_indices:
                 batch_id = index // self.beam_size
                 if finished_arr[batch_id]:
                     continue
                 hyplist = result_dict[batch_id]
-                ys = memory[index, :].numpy()
+                ys = memory[index, :].cpu().numpy()
                 log_prob = top_scores[index, 0]
                 new_hyp = Hypothesis(ys, log_prob)
                 hyplist.add(new_hyp)
