@@ -109,6 +109,7 @@ class Model(nn.Module):
         loss = tf_loss
         if self.ctc_weight >= 0.:
             ctc_loss = self._comp_ctc_loss(enc, targets, target_lengths)
+            print(f"ctc_loss is: {ctc_loss}, tf_loss is {tf_loss}")
             loss = (1 - self.ctc_weight) * loss + self.ctc_weight * ctc_loss
         return loss
 
@@ -145,9 +146,9 @@ class Model(nn.Module):
     def _comp_ctc_loss(self, enc, targets, target_lengths):
         max_len = torch.max(target_lengths)
         targets = targets[:, :max_len]
-        logits = self.ctc_head(enc)
-        bs, l, *_ = logits.size()
-        input_lengths = torch.full((bs, ), l, dtype=torch.int,
+        logits = self.ctc_head(enc.permute(1, 0, 2))
+        bs, l, *_ = enc.size()
+        input_lengths = torch.full((bs, ), l, dtype=torch.long,
                                    device=enc.device)
         log_probs = F.log_softmax(logits, dim=-1)
         loss = self.ctc_loss(log_probs, targets, input_lengths, target_lengths)
@@ -311,7 +312,7 @@ def kldiv_loss(
 
     # return loss according to reduction specified
     if reduction == "mean":
-        return loss.sum().mean()
+        return loss.sum() / (bz * time)
     elif reduction == "batchmean":
         return loss.sum() / bz
     elif reduction == "batch":
