@@ -105,6 +105,7 @@ class TransformerEncoder(nn.Module):
             ]
         )
         self.norm = LayerNorm(d_model, eps=1e-6)
+        self.normalize_before = normalize_before
 
     def forward(
         self,
@@ -123,7 +124,8 @@ class TransformerEncoder(nn.Module):
                 pos_embs=pos_embs,
             )
             attention_lst.append(attention)
-        output = self.norm(output)
+        if self.normalize_before:
+            output = self.norm(output)
 
         return output, attention_lst
 

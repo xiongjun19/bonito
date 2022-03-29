@@ -62,7 +62,7 @@ class DecodeSearcher(object):
             self._update_hyps(memory, eos_mask, prev_scores, input_tgt, finished_arr, result_dict)
 
         best_hyps = [hyp_list.get_most_probable(length_norm=True) for hyp_list in result_dict]
-        ys_arr = [best_hyp.ys for best_hyp in best_hyps]
+        ys_arr = [best_hyp.ys[1:] for best_hyp in best_hyps]
         return ys_arr
 
     def _init_vars(self, bs, device):

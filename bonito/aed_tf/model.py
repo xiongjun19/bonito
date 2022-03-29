@@ -61,15 +61,9 @@ class Model(nn.Module):
         self.lb_sm = config['decoder'].get('lb_sm', 0.)
         self.searcher = DecodeSearcher(self.decoder, self.blank_id,
                 self.bos, **config['search'])
-        self._freeze = False
 
     def forward(self, x):
-        if self._freeze:
-            self.encoder.eval()
-            with torch.no_grad():
-                enc = self.encoder(x)
-        else:
-            enc = self.encoder(x)
+        enc = self.encoder(x)
         return enc
 
     def decode_batch(self, scores):
@@ -107,6 +101,8 @@ class Model(nn.Module):
         """
         targets, target_lengths = self._cvt_targets(targets, target_lengths)
         tf_loss = self._comp_tf_loss(enc, targets, target_lengths)
+        # if tf_loss <= 500:
+        #     import ipdb; ipdb.set_trace()
         return tf_loss
 
     def _comp_tf_loss(self, enc, targets, target_lengths):
@@ -165,7 +161,7 @@ class Model(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, vocab_size, blank_id,
                  d_model=512, nhead=8,
-                 layers=6, dropout=0.1, normalize_before=True,
+                 layers=6, dropout=0.1, normalize_before=False,
                  **kwargs):
         super().__init__()
         self.decoder = TransformerDecoder(
@@ -192,6 +188,7 @@ class Decoder(nn.Module):
         emb = self.emb(x) * self.emb_scale
         pe = self.pos_emb(emb)
         in_x = emb + pe
+        # in_x = emb
 
         decoder_out, _, _ = self.decoder(
             tgt=in_x,
@@ -235,6 +232,7 @@ class CusEncoder(nn.Module):
                 normalize_before=normalize_before
         )
         self.norm = nn.LayerNorm(d_model)
+        self.scale = math.sqrt(d_model)
 
     def forward(
         self,
@@ -244,7 +242,7 @@ class CusEncoder(nn.Module):
     ):
         output = self.norm(src)
         pe = self.pos_enc(output)
-        output = output + pe
+        output = output * 5  + pe
         output, _ = self.encoder(output, src_mask, src_key_padding_mask)
         return output
 
