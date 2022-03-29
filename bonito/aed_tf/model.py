@@ -60,7 +60,12 @@ class Model(nn.Module):
         self.decoder = Decoder(self.voc_size, self.blank_id, **config['decoder'])
         self.lb_sm = config['decoder'].get('lb_sm', 0.)
         self.searcher = DecodeSearcher(self.decoder, self.blank_id,
-                self.bos, **config['search'])
+                                       self.bos, **config['search'])
+        self.ctc_loss = nn.CTCLoss(blank=self.blank_id, reduction='mean')
+        self.ctc_weight = 0.0
+        if 'ctc' in config:
+            self.ctc_weight = config['ctc'].get('weight', 0.0)
+        self.ctc_head = nn.Linear(config['encoder']['features'], self.voc_size - 1)
 
     def forward(self, x):
         enc = self.encoder(x)
@@ -83,8 +88,8 @@ class Model(nn.Module):
                 offset += 1
             begin_score = score_list[0] - 1
             for i in range(self.n_base):
-                base = self.n_base ** (self.n_gram - 1 -i)
-                val = begin_score // base  % self.n_base + 1
+                base = self.n_base ** (self.n_gram - 1 - i)
+                val = begin_score // base % self.n_base + 1
                 res[i] = val
             return res
         return []
@@ -101,9 +106,11 @@ class Model(nn.Module):
         """
         targets, target_lengths = self._cvt_targets(targets, target_lengths)
         tf_loss = self._comp_tf_loss(enc, targets, target_lengths)
-        # if tf_loss <= 500:
-        #     import ipdb; ipdb.set_trace()
-        return tf_loss
+        loss = tf_loss
+        if self.ctc_weight >= 0.:
+            ctc_loss = self._comp_ctc_loss(enc, targets, target_lengths)
+            loss = (1 - self.ctc_weight) * loss + self.ctc_weight * ctc_loss
+        return loss
 
     def _comp_tf_loss(self, enc, targets, target_lengths):
         bos_targets, eos_targets, new_lengths = self._prep_targets(targets, target_lengths)
@@ -134,6 +141,17 @@ class Model(nn.Module):
         key_padding = (x == self.blank_id).detach()
         att_mask = get_lookahead_mask(x)
         return att_mask, key_padding
+
+    def _comp_ctc_loss(self, enc, targets, target_lengths):
+        max_len = torch.max(target_lengths)
+        targets = targets[:, :max_len]
+        logits = self.ctc_head(enc)
+        bs, l, *_ = logits.size()
+        input_lengths = torch.full((bs, ), l, dtype=torch.int,
+                                   device=enc.device)
+        log_probs = F.log_softmax(logits, dim=-1)
+        loss = self.ctc_loss(log_probs, targets, input_lengths, target_lengths)
+        return loss
 
     def _cvt_targets(self, targets, target_lengths):
         bs, padded_len = targets.size()
@@ -242,7 +260,7 @@ class CusEncoder(nn.Module):
     ):
         output = self.norm(src)
         pe = self.pos_enc(output)
-        output = output * 5  + pe
+        output = output * 5 + pe
         output, _ = self.encoder(output, src_mask, src_key_padding_mask)
         return output
 
@@ -267,7 +285,7 @@ def kldiv_loss(
     length=None,
     label_smoothing=0.0,
     pad_idx=0,
-    reduction="batchmean",
+    reduction="mean",
 ):
     if log_probabilities.dim() == 2:
         log_probabilities = log_probabilities.unsqueeze(1)
