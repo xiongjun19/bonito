@@ -23,6 +23,7 @@ activation = "swish"
 blank_score = 2.0
 num_layers=6
 dropout=0.1
+normalize_before = true
 
 [decoder]
 d_model = 512
@@ -30,12 +31,17 @@ nhead = 8
 layers = 3
 dropout = 0.1
 lb_sm = 0.01
+normalize_before = true
 
 [search]
 beam_size = 4
 max_decode_ratio=0.8
 min_decode_ratio=0.0
 len_norm=true
+dec_layer_num = 3
+ths_path = "/workspace/FasterTransformer/build/lib/libpyt_fastertransformer.so"
+hid_dim = 512
+head_num = 8
 
 
 [global_norm]

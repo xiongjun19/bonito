@@ -17,3 +17,10 @@ RUN git clone https://github.com/k2-fsa/icefall && \
     pip install -r requirements.txt
 
 ENV PYTHONPATH=/workspace/icefall:$PYTHONPATH
+
+RUN git clone https://github.com/NVIDIA/FasterTransformer.git && \
+    cd FasterTransformer && \
+    mkdir -p build && \
+    cd build && \
+    cmake -DSM=80 -DCMAKE_BUILD_TYPE=Release -DBUILD_PYT=ON .. && \
+    make

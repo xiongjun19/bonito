@@ -14,7 +14,7 @@ from bonito.nn import Convolution, Serial, Permute
 from .transformer import TransformerEncoder
 from .transformer import TransformerDecoder
 from .transformer import PositionalEncoding
-from .searcher import DecodeSearcher
+from .searcher2 import DecodeSearcher
 
 
 def get_stride(m):
@@ -59,8 +59,10 @@ class Model(nn.Module):
                                            insize=config['input']['features'], **config['encoder'])
         self.decoder = Decoder(self.voc_size, self.blank_id, **config['decoder'])
         self.lb_sm = config['decoder'].get('lb_sm', 0.)
-        self.searcher = DecodeSearcher(self.decoder, self.blank_id,
-                                       self.bos, **config['search'])
+        # self.searcher = DecodeSearcher(self.decoder, self.blank_id,
+        #                                self.bos, **config['search'])
+        self.searcher = DecodeSearcher(self.decoder, self.blank_id, self.bos, self.voc_size,
+                                       **config['search'])
         self.ctc_loss = nn.CTCLoss(blank=self.blank_id, reduction='mean')
         self.ctc_weight = 0.0
         if 'ctc' in config:
@@ -204,10 +206,10 @@ class Decoder(nn.Module):
             tgt_mask=None,
             tgt_key_padding_mask=None,
             src_key_padding_mask=None):
-        emb = self.emb(x) * self.emb_scale
+        # emb = self.emb(x) * self.emb_scale
+        emb = self.emb(x)
         pe = self.pos_emb(emb)
         in_x = emb + pe
-        # in_x = emb
 
         decoder_out, _, _ = self.decoder(
             tgt=in_x,
