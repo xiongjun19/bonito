@@ -3,6 +3,8 @@
 import torch
 import math
 import os
+import subprocess
+import shlex
 
 
 class DecodeSearcher(object):
@@ -29,6 +31,7 @@ class DecodeSearcher(object):
         self.max_step_for_pe = 2500
         self.hidden_dim = kwargs['hid_dim']
         self.decoding = self._init_ft_decoding()
+        self.max_len = int(720 * self.max_dec_ratio) 
 
     def beam_search(self, encs):
         with torch.no_grad():
@@ -43,16 +46,22 @@ class DecodeSearcher(object):
         new_order = torch.arange(bs, device=device, dtype=torch.int)
         new_order = new_order.view(-1, 1).repeat(1, self.beam_size).view(-1)
         encoder_out = self.reorder_enc(encoder_out, new_order)
-        bs, time_steps = encoder_out.size()[:2]
-        src_lengths = torch.full([bs], time_steps, device=device,
+        src_lengths = torch.full([bs * self.beam_size], time_steps, device=device,
                                  dtype=torch.int)
+        # print(bs)
+        # print(self.beam_size)
+        # print(max_len)
+        # print(encoder_out.shape)
+        # print(encoder_out.dtype)
+        # print(src_lengths.shape)
+        # print(src_lengths.dtype)
         output_ids, parent_ids, out_seq_lens = \
             self.decoding.forward(bs, self.beam_size, max_len,
                                   encoder_out, src_lengths)
         parent_ids = parent_ids % self.beam_size
         beams = self.finalize(output_ids, parent_ids, out_seq_lens,
                               self.eos, max_len)
-        beams = beams[:, :, 0].cpu.numpy()
+        beams = beams[:, :, 0].cpu().numpy()
         ys_arr = [
             [x for x in hyps if x != self.eos]
             for hyps in beams
@@ -75,11 +84,24 @@ class DecodeSearcher(object):
         parent_ids = torch.reshape(parent_ids, shape)
         # torch.classes.load_library(args.ths_path)
         ids = torch.ops.fastertransformer.gather_tree(output_ids.to(torch.int32), parent_ids.to(torch.int32), max_lens.to(torch.int32), end_id)
-        ids = torch.einsum('ijk->jki', ids)
+        ids = torch.einsum('ijk->jik', ids)
         return ids
+
+    def prep_dec(self, bs):
+        head_num = self.args.get('head_num')
+        hidden_dim = self.args.get('hid_dim')
+        head_size = hidden_dim // head_num
+        layer_num = self.layer_num
+        cmd_str = f"/workspace/FasterTransformer/build/bin/decoding_gemm {bs} {self.beam_size} {head_num} {head_size} {self.vocab_size} {self.max_len} {self.hidden_dim} 0"
+        print("running config: ", cmd_str)
+        cmd_args = shlex.split(cmd_str)
+        subprocess.call(cmd_args)    
+        print("finished config")
+        self._init_ft_decoding()
 
     def _init_ft_decoding(self):
         w = self._init_weights()
+        w = [x.cuda() for x in w]
         torch.classes.load_library(os.path.abspath(self.ths_path))
         head_num = self.args.get('head_num')
         hidden_dim = self.args.get('hid_dim')

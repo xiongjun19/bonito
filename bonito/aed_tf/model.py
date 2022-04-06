@@ -73,6 +73,11 @@ class Model(nn.Module):
         enc = self.encoder(x)
         return enc
 
+    def prep_dec(self, bs):
+        if getattr(self.searcher, 'prep_dec', None):
+            self.searcher.prep_dec(bs)
+
+
     def decode_batch(self, scores):
         n_best_match, n_match_score = self.searcher.beam_search(scores)
         id_list = [self._scores2ids(match) for match in n_best_match]
@@ -109,7 +114,7 @@ class Model(nn.Module):
         targets, target_lengths = self._cvt_targets(targets, target_lengths)
         tf_loss = self._comp_tf_loss(enc, targets, target_lengths)
         loss = tf_loss
-        if self.ctc_weight >= 0.:
+        if self.ctc_weight > 0.:
             ctc_loss = self._comp_ctc_loss(enc, targets, target_lengths)
             print(f"ctc_loss is: {ctc_loss}, tf_loss is {tf_loss}")
             loss = (1 - self.ctc_weight) * loss + self.ctc_weight * ctc_loss

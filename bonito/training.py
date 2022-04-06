@@ -88,6 +88,9 @@ class Trainer:
         self.grad_accum_split = grad_accum_split
         self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         self.optimizer = None
+        # self.wb = wandb.init(project='bonito_training')
+        # self.wb.watch(self.model, log='all')
+
 
     def train_one_step(self, batch):
         self.optimizer.zero_grad()
@@ -128,18 +131,36 @@ class Trainer:
         smoothed_loss = None
 
         with progress_bar:
-
+            grad_res_dict = {}
+            i = 0
             for batch in self.train_loader:
-
                 chunks += batch[0].shape[0]
 
                 losses, grad_norm = self.train_one_step(batch)
+                named_paras = self.model.named_parameters()
+                # i += 1
+                # if i <= 100:
+                #     for n, p in named_paras:
+                #         if p.requires_grad:
+                #             if n not in grad_res_dict:
+                #                 grad_res_dict[n]= []
+                #             if p.grad is None:
+                #                 print(f"{n}'s gradient is None")
+                #                 continue
+                #             grad_res_dict[n].append(p.grad.abs().mean().cpu().item())
+                # else:
+                #     import json
+                #     with open("grad_mean_2.json", "w") as in_:
+                #         json.dump(grad_res_dict, in_)
+                #     import ipdb; ipdb.set_trace()
+
 
                 smoothed_loss = losses['loss'] if smoothed_loss is None else (0.01 * losses['loss'] + 0.99 * smoothed_loss)
 
                 progress_bar.set_postfix(loss='%.4f' % smoothed_loss)
                 progress_bar.set_description("[{}/{}]".format(chunks, len(self.train_loader.sampler)))
                 progress_bar.update()
+
 
                 if loss_log is not None:
                     lr = lr_scheduler.get_last_lr() if lr_scheduler is not None else [pg["lr"] for pg in optim.param_groups]
@@ -152,6 +173,12 @@ class Trainer:
                         **losses
                     })
 
+                    # self.wb.log({
+                    #     'train_lr': lr, 
+                    #     'train_loss': losses['loss'],
+                    #     'grad_norm': grad_norm,
+                    #     })
+
                 if lr_scheduler is not None: lr_scheduler.step()
 
         return smoothed_loss, perf_counter() - t0
@@ -163,6 +190,7 @@ class Trainer:
         losses = self.criterion(scores, targets.to(self.device), lengths.to(self.device))
         losses = {k: v.item() for k, v in losses.items()} if isinstance(losses, dict) else losses.item()
         if hasattr(self.model, 'decode_batch'):
+                                
             seqs = self.model.decode_batch(scores)
         else:
             seqs = [self.model.decode(x) for x in permute(scores, 'TNC', 'NTC')]
@@ -176,6 +204,9 @@ class Trainer:
         self.model.eval()
         print("valid num is: ", len(self.valid_loader))
         with torch.no_grad():
+            if hasattr(self.model, 'prep_dec'):
+                bs = self.valid_loader.batch_size 
+                self.model.prep_dec(bs)
             seqs, refs, accs, losses = zip(*(self.validate_one_step(batch) for batch in tqdm(self.valid_loader)))
         seqs, refs, accs = (sum(x, []) for x in (seqs, refs, accs))
         loss = np.mean([(x['loss'] if isinstance(x, dict) else x) for x in losses])
