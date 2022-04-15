@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 class DecodeSearcher(object):
     def __init__(self, decoder, pad_id, eos,
+                 vocab_size,
                  beam_size=4,
                  max_decode_ratio=0.8,
                  min_decode_ratio=0.0,
@@ -27,6 +28,11 @@ class DecodeSearcher(object):
     def beam_search(self, encs):
         with torch.no_grad():
             best_match = self.search_impl(encs)
+            with open("test_search1.json", 'w') as out_:
+                for arr_ in best_match:
+                    num = len(arr_)
+                    str_ = str(num) + "\t" + ",".join(map(str, arr_)) + "\n"
+                    out_.write(str_)
         return best_match, None
 
     def search_impl(self, encoder_out):
@@ -55,6 +61,9 @@ class DecodeSearcher(object):
             # update new scores and new input
             prev_scores = top_scores.masked_fill(eos_mask, self.minus_inf)
             input_tgt = next_inp
+            tmp_input_ = input_tgt[:, -1].cpu().numpy()
+            print("selected result: ")
+            print(",".join(map(str, tmp_input_)))
 
         # when not finished
         if not self._check_finished(finished_arr):

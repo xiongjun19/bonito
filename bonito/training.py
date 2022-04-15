@@ -206,7 +206,7 @@ class Trainer:
         with torch.no_grad():
             if hasattr(self.model, 'prep_dec'):
                 bs = self.valid_loader.batch_size 
-                self.model.prep_dec(bs)
+                self.model.prep_dec(bs, False)
             seqs, refs, accs, losses = zip(*(self.validate_one_step(batch) for batch in tqdm(self.valid_loader)))
         seqs, refs, accs = (sum(x, []) for x in (seqs, refs, accs))
         loss = np.mean([(x['loss'] if isinstance(x, dict) else x) for x in losses])

@@ -1,5 +1,6 @@
 # coding=utf8
 
+import numpy as np
 import torch
 import math
 import os
@@ -30,15 +31,24 @@ class DecodeSearcher(object):
         self.ths_path = kwargs['ths_path']
         self.max_step_for_pe = 2500
         self.hidden_dim = kwargs['hid_dim']
-        self.decoding = self._init_ft_decoding()
+        self.init_sate = False
+        # self.decoding = self._init_ft_decoding()
+        print("after first init")
         self.max_len = int(720 * self.max_dec_ratio) 
 
     def beam_search(self, encs):
         with torch.no_grad():
             best_match = self.search_impl(encs)
+            # with open("test_search2.json", 'w') as out_:
+            #     for arr_ in best_match:
+            #         num = len(arr_)
+            #         str_ = str(num) + "\t" + ",".join(map(str, arr_)) + "\n"
+            #         out_.write(str_)
         return best_match, None
 
     def search_impl(self, encoder_out):
+        with open('test_enc_out.txt', 'w') as out_:
+            out_.write(f'{encoder_out}\n')
         device = encoder_out.device
         bs, time_steps = encoder_out.size()[0:2]
         max_len = int(self.max_dec_ratio * time_steps)
@@ -46,6 +56,7 @@ class DecodeSearcher(object):
         new_order = torch.arange(bs, device=device, dtype=torch.int)
         new_order = new_order.view(-1, 1).repeat(1, self.beam_size).view(-1)
         encoder_out = self.reorder_enc(encoder_out, new_order)
+        # encoder_out = encoder_out.float()
         src_lengths = torch.full([bs * self.beam_size], time_steps, device=device,
                                  dtype=torch.int)
         # print(bs)
@@ -62,11 +73,19 @@ class DecodeSearcher(object):
         beams = self.finalize(output_ids, parent_ids, out_seq_lens,
                               self.eos, max_len)
         beams = beams[:, :, 0].cpu().numpy()
+        
         ys_arr = [
-            [x for x in hyps if x != self.eos]
-            for hyps in beams
+            self._remove_tail(hyps) for hyps in beams
         ]
         return ys_arr
+
+    def _remove_tail(self, _arr):
+        idx_arr = np.where(_arr == self.eos)[0]
+        if len(idx_arr) < 1:
+            return _arr
+        return _arr[:idx_arr[0]]
+        
+
 
     def reorder_enc(self, enc, new_order):
         return enc.index_select(0, new_order)
@@ -81,32 +100,47 @@ class DecodeSearcher(object):
         else:
             shape = (torch.max(max_lens), -1, beam_size)
         output_ids = torch.reshape(output_ids, shape)
+        # with open("test_output_ids.txt", 'w') as out_:
+        #     str_ = f"{output_ids}\n"
+        #     out_.write(str_)
         parent_ids = torch.reshape(parent_ids, shape)
         # torch.classes.load_library(args.ths_path)
         ids = torch.ops.fastertransformer.gather_tree(output_ids.to(torch.int32), parent_ids.to(torch.int32), max_lens.to(torch.int32), end_id)
         ids = torch.einsum('ijk->jik', ids)
         return ids
 
-    def prep_dec(self, bs):
+    def prep_dec(self, bs, is_half):
         head_num = self.args.get('head_num')
         hidden_dim = self.args.get('hid_dim')
         head_size = hidden_dim // head_num
         layer_num = self.layer_num
-        cmd_str = f"/workspace/FasterTransformer/build/bin/decoding_gemm {bs} {self.beam_size} {head_num} {head_size} {self.vocab_size} {self.max_len} {self.hidden_dim} 0"
+        status = 1 if is_half else 0
+        cmd_str = f"/workspace/FasterTransformer/build/bin/decoding_gemm {bs} {self.beam_size} {head_num} {head_size} {self.vocab_size} {self.max_len} {self.hidden_dim} {status}"
         print("running config: ", cmd_str)
         cmd_args = shlex.split(cmd_str)
         subprocess.call(cmd_args)    
         print("finished config")
-        self._init_ft_decoding()
+        self.decoding = self._init_ft_decoding()
 
     def _init_ft_decoding(self):
         w = self._init_weights()
+        # f_name = 'first_weights.txt' if not self.init_sate else "sec_weigts.txt"
+        # with open(f_name, 'w') as out_:
+        #     for i, a_w in enumerate(w):
+        #         shape = a_w.shape
+        #         dtype = a_w.dtype
+        #         str_ = f'{i}th is: shape:{shape}, type: {dtype}\n'
+        #         out_.write(str_)
+        #         str_ = f'{a_w}\n'
+        #         out_.write(str_)
+                 
         w = [x.cuda() for x in w]
         torch.classes.load_library(os.path.abspath(self.ths_path))
         head_num = self.args.get('head_num')
         hidden_dim = self.args.get('hid_dim')
         head_size = hidden_dim // head_num
         layer_num = self.layer_num
+        self.init_sate = True
         try:
             decoding = torch.classes.FasterTransformer.Decoding(head_num, head_size, hidden_dim, layer_num,
                                                                 self.vocab_size, self.eos, self.eos,
@@ -292,7 +326,9 @@ class DecodeSearcher(object):
         w.append(
             _dict[self._join_str([pre1, 'emb.weight'])]
         )
-        w.append(self._get_position_encoding())  # pe_encoding
+        pe_enc = self._get_position_encoding()
+        pe_enc = pe_enc.type(w[-1].dtype)
+        w.append(pe_enc)  # pe_encoding
         # final linear
         w.append(
             _dict[self._join_str([pre1, 'linear.weight'])].transpose(-1, -2).contiguous()

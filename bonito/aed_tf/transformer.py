@@ -410,6 +410,7 @@ class TransformerDecoder(nn.Module):
     ):
         output = tgt
         self_attns, multihead_attns = [], []
+        i = 0;
         for dec_layer in self.layers:
             output, self_attn, multihead_attn = dec_layer(
                 output,
@@ -423,6 +424,10 @@ class TransformerDecoder(nn.Module):
             )
             self_attns.append(self_attn)
             multihead_attns.append(multihead_attn)
+            # print(f"output from dec layer @ {i}:")
+            # c_tmp = output[0, 0, :].cpu().numpy()
+            # print(",".join(map(str, c_tmp)))
+            # i += 1
         output = self.norm(output)
 
         return output, self_attns, multihead_attns

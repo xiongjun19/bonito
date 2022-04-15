@@ -50,6 +50,9 @@ def main(args):
         print("* loading model", w)
 
         model = load_model(args.model_directory, args.device, weights=w)
+        if hasattr(model, "prep_dec"):
+            # time.sleep(10)
+            model.prep_dec(dataloader.batch_size, True)
 
         print("* calling")
         t0 = time.perf_counter()
