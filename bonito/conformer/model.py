@@ -16,6 +16,7 @@ from seqdist.core import SequenceDist, Max, Log, semiring
 
 from .conformer import ConformerEncoder
 from .conformer import RelPosEncXL
+from scipy.special import logsumexp
 
 
 
@@ -177,7 +178,119 @@ class SeqdistModel(Module):
     def decode_batch(self, x):
         scores = self.seqdist.posteriors(x.to(torch.float32)) + 1e-8
         tracebacks = self.seqdist.viterbi(scores.log()).to(torch.int16).T
+        # tracebacks2 = self.np_decode(x)
         return [self.seqdist.path_to_str(x) for x in tracebacks.cpu().numpy()]
+
+    def np_decode(self, x):
+        idx = self.seqdist.idx.cpu().numpy()
+        idx_T = self.seqdist.idx.flatten().argsort().cpu().numpy()
+        scores = self.np_dec_first(x.to(torch.float32), idx, idx_T) + 1e-8
+        tracebacks = self.np_viterbi(scores.log(), idx, idx_T).to(torch.int16).T
+        return [self.seqdist.path_to_str(x) for x in tracebacks.cpu().numpy()]
+
+    def _init_for_dec(self, scores):
+        T, N, _ = scores.shape
+        Ms = scores.reshape(T, N, -1, 5)
+        alpha_0 = np.full((N, 4 **(5)), 0., dtype=Ms.dtype)
+        beta_T = np.full((N, 4**(5)), 0., dtype=Ms.dtype)
+        return Ms, alpha_0, beta_T
+
+    def np_dec_first(self, x, idx, idx_T):
+        x = x.cpu().numpy()
+        Ms, alpha_0, beta_T = self._init_for_dec(x)
+        T, N, C, NZ = Ms.shape
+        Ms_grad = self.np_fwd_first(Ms, idx, alpha_0)
+        betas = self.np_bwd_first(Ms, idx_T, beta_T)
+        Ms_grad = Ms_grad + betas[1:, :, :, None]
+        ts = torch.FloatTensor(Ms_grad)
+        prob = torch.softmax(ts.reshape(T, N, -1), dim=2)
+        return prob
+
+
+    def np_fwd_first(self, Ms, idx, v0):
+        T, N, C, NZ = Ms.shape
+        Ms_grad = np.full((T, N, C, NZ), -1e+38)
+        for bx in range(N):
+            mem = np.copy(v0[bx])
+            tmp_a = np.copy(mem)
+            s = [0] * NZ
+            for t in range(T):
+                mem = np.copy(tmp_a)
+                for tx in range(C):
+                    for j in range(NZ):
+                        s[j] = mem[idx[tx, j]] + Ms[t, bx, tx, j]
+                        Ms_grad[t, bx, tx, j] = s[j]
+                    tmp_a[tx] = logsumexp(s)
+        return Ms_grad
+
+    def np_bwd_first(self, Ms, idx_T, vT):
+        T, N, C, NZ = Ms.shape
+        betas = np.full((T+1, N, C), -1e+38)
+        for bx in range(N):
+            mem = np.copy(vT[bx])
+            betas[T, bx, :] = vT[bx]
+            tmp_a = np.copy(mem)
+            s = [0] * NZ
+            for t in range(T-1, -1, -1):
+                mem = np.copy(tmp_a)
+                for tx in range(C):
+                    for j in range(NZ):
+                        ix = idx_T[tx * NZ + j]
+                        n_tx = ix // NZ
+                        n_j = ix - NZ * n_tx
+                        s[j] = mem[n_tx] + Ms[t, bx, n_tx, n_j]
+                    tmp_a[tx] = logsumexp(s)
+                    betas[t, bx, tx] = tmp_a[tx]
+        return betas
+
+    def np_viterbi(self, x, idx, idx_T):
+        x = x.cpu().numpy()
+        Ms, alpha_0, beta_T = self._init_for_dec(x)
+        T, N, C, NZ = Ms.shape
+        Ms_grad = self.np_fwd_viterbi(Ms, idx, alpha_0)
+        betas = self.np_bwd_viterbi(Ms, idx_T, beta_T)
+        Ms_grad = Ms_grad + betas[1:, :, :, None]
+        ts = torch.FloatTensor(Ms_grad).reshape(T, N, -1)
+        dim = 2
+        res = torch.zeros_like(ts).scatter_(dim, ts.argmax(dim, True), 1.0)
+        paths = res.argmax(2) % 5
+        return paths
+
+    def np_fwd_viterbi(self, Ms, idx, v0):
+        T, N, C, NZ = Ms.shape
+        Ms_grad = np.full((T, N, C, NZ), -1e+38)
+        for bx in range(N):
+            mem = np.copy(v0[bx])
+            tmp_a = np.copy(mem)
+            s = [0] * NZ
+            for t in range(T):
+                mem = np.copy(tmp_a)
+                for tx in range(C):
+                    for j in range(NZ):
+                        s[j] = mem[idx[tx, j]] + Ms[t, bx, tx, j]
+                        Ms_grad[t, bx, tx, j] = s[j]
+                    tmp_a[tx] = np.max(s)
+        return Ms_grad
+
+    def np_bwd_viterbi(self, Ms, idx_T, vT):
+        T, N, C, NZ = Ms.shape
+        betas = np.full((T+1, N, C), -1e+38)
+        for bx in range(N):
+            mem = np.copy(vT[bx])
+            betas[T, bx, :] = vT[bx]
+            tmp_a = np.copy(mem)
+            s = [0] * NZ
+            for t in range(T-1, -1, -1):
+                mem = np.copy(tmp_a)
+                for tx in range(C):
+                    for j in range(NZ):
+                        ix = idx_T[tx * NZ + j]
+                        n_tx = ix // NZ
+                        n_j = ix - NZ * n_tx
+                        s[j] = mem[n_tx] + Ms[t, bx, n_tx, n_j]
+                    tmp_a[tx] = np.max(s)
+                    betas[t, bx, tx] = tmp_a[tx]
+        return betas
 
     def decode(self, x):
         return self.decode_batch(x.unsqueeze(1))[0]
